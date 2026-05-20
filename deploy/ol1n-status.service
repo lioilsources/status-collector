@@ -1,0 +1,24 @@
+[Unit]
+Description=ol1n Status Collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ol1n
+Group=ol1n
+ExecStart=/usr/local/bin/status-collector \
+    -db    /var/lib/ol1n-status/status.db \
+    -addr  127.0.0.1:8765 \
+    -interval 1h
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ol1n-status
+
+# Data dir permissions
+ReadWritePaths=/var/lib/ol1n-status
+
+[Install]
+WantedBy=multi-user.target

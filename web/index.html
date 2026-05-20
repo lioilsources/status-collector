@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ol1n — system status</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+  :root {
+    --bg:        #0a0a0b;
+    --surface:   #111114;
+    --border:    #1e1e24;
+    --border2:   #2a2a33;
+    --text:      #e2e2e8;
+    --muted:     #6b6b7a;
+    --accent:    #7c6af7;
+    --up:        #22c55e;
+    --up-dim:    #16613a;
+    --down:      #ef4444;
+    --down-dim:  #6b1d1d;
+    --warn:      #f59e0b;
+    --no-data:   #1e1e24;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { font-size: 14px; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+
+  /* ── Scanline overlay ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,.07) 2px,
+      rgba(0,0,0,.07) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── Header ── */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    background: rgba(10,10,11,.92);
+    backdrop-filter: blur(8px);
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: -.02em;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .logo span { color: var(--accent); }
+
+  .header-meta {
+    font-family: var(--font-mono);
+    font-size: .72rem;
+    color: var(--muted);
+    text-align: right;
+  }
+
+  /* ── Hero status bar ── */
+  .hero {
+    border-bottom: 1px solid var(--border);
+    padding: 28px 24px 24px;
+  }
+
+  .overall-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+
+  .status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .status-dot.up {
+    background: var(--up);
+    box-shadow: 0 0 8px var(--up);
+  }
+  .status-dot.up::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    background: var(--up);
+    opacity: .2;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .status-dot.down { background: var(--down); box-shadow: 0 0 8px var(--down); }
+  .status-dot.partial { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: .2; }
+    50%       { transform: scale(1.6); opacity: 0; }
+  }
+
+  .overall-label {
+    font-family: var(--font-mono);
+    font-size: 1.2rem;
+    font-weight: 500;
+  }
+
+  .hero-sub {
+    font-size: .8rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    padding-left: 22px;
+  }
+
+  /* ── Main layout ── */
+  main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 32px 24px 64px;
+  }
+
+  /* ── Group header ── */
+  .group-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 36px 0 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .group-header h2 {
+    font-family: var(--font-mono);
+    font-size: .7rem;
+    font-weight: 500;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .group-header::before {
+    content: '';
+    display: block;
+    width: 3px;
+    height: 14px;
+    background: var(--accent);
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  /* ── Endpoint row ── */
+  .endpoint {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    overflow: hidden;
+    transition: border-color .15s;
+  }
+  .endpoint:hover { border-color: var(--border2); }
+
+  .endpoint-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px 10px;
+  }
+
+  .ep-name {
+    font-family: var(--font-mono);
+    font-size: .82rem;
+    font-weight: 500;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ep-uptime {
+    font-family: var(--font-mono);
+    font-size: .72rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .ep-badge {
+    font-family: var(--font-mono);
+    font-size: .65rem;
+    font-weight: 600;
+    letter-spacing: .05em;
+    padding: 2px 7px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .ep-badge.up   { background: rgba(34,197,94,.12); color: var(--up); border: 1px solid rgba(34,197,94,.2); }
+  .ep-badge.down { background: rgba(239,68,68,.12);  color: var(--down); border: 1px solid rgba(239,68,68,.2); }
+  .ep-badge.unknown { background: rgba(107,107,122,.1); color: var(--muted); border: 1px solid var(--border); }
+
+  /* ── Timeline grid ── */
+  .timeline {
+    padding: 0 16px 12px;
+  }
+
+  .timeline-labels {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: .62rem;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .buckets {
+    display: flex;
+    gap: 1px;
+    height: 28px;
+    align-items: stretch;
+  }
+
+  .bucket {
+    flex: 1;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: filter .1s, transform .1s;
+    position: relative;
+  }
+  .bucket:hover { filter: brightness(1.5); transform: scaleY(1.1); z-index: 1; }
+
+  .bucket.up        { background: var(--up-dim); }
+  .bucket.up.full   { background: var(--up); }
+  .bucket.up.high   { background: #18a84e; }
+  .bucket.down      { background: var(--down-dim); }
+  .bucket.no-data   { background: var(--no-data); }
+  .bucket.partial   { background: var(--warn); opacity: .6; }
+
+  /* ── Tooltip ── */
+  .tooltip {
+    position: fixed;
+    background: #1a1a22;
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: .7rem;
+    pointer-events: none;
+    z-index: 500;
+    white-space: nowrap;
+    display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,.6);
+  }
+  .tooltip.visible { display: block; }
+  .tooltip .t-time  { color: var(--muted); margin-bottom: 3px; }
+  .tooltip .t-avail { font-weight: 600; }
+  .tooltip .t-avail.up   { color: var(--up); }
+  .tooltip .t-avail.down { color: var(--down); }
+  .tooltip .t-avail.partial { color: var(--warn); }
+  .tooltip .t-lat   { color: var(--muted); margin-top: 2px; font-size: .65rem; }
+
+  /* ── Latency row ── */
+  .ep-latency {
+    font-family: var(--font-mono);
+    font-size: .7rem;
+    color: var(--muted);
+    padding: 0 16px 4px;
+  }
+  .ep-latency span { color: var(--text); }
+
+  /* ── Loading / error ── */
+  .state-msg {
+    text-align: center;
+    padding: 80px 24px;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    font-size: .85rem;
+  }
+  .state-msg .big { font-size: 2rem; margin-bottom: 12px; }
+
+  /* ── Footer ── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 20px 24px;
+    font-family: var(--font-mono);
+    font-size: .68rem;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  /* ── Spinner ── */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+
+  /* ── Fade-in ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .endpoint {
+    animation: fadeUp .3s ease both;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="logo" href="/">ol1n<span>.</span>status</a>
+  <div class="header-meta">
+    <div id="last-updated">načítám…</div>
+    <div>llm.ol1n.com</div>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="overall-status">
+    <div class="status-dot" id="overall-dot"></div>
+    <div class="overall-label" id="overall-label">Zjišťuji stav…</div>
+  </div>
+  <div class="hero-sub" id="overall-sub"></div>
+</div>
+
+<main id="main">
+  <div class="state-msg">
+    <div><span class="spinner"></span> Načítám data…</div>
+  </div>
+</main>
+
+<footer>
+  <div>Interval kontroly: 1 hodina · Retenace dat: 30 dní</div>
+  <div id="footer-ts"></div>
+</footer>
+
+<div class="tooltip" id="tooltip">
+  <div class="t-time" id="tt-time"></div>
+  <div class="t-avail" id="tt-avail"></div>
+  <div class="t-lat"   id="tt-lat"></div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────
+// Adjust API_BASE if the collector runs on a different origin.
+// For same-origin deployment, '' works fine.
+const API_BASE = window.location.origin === 'https://status.ol1n.com'
+  ? 'https://status.ol1n.com'
+  : window.location.origin;
+
+const DAYS = 30;
+const HOURS = DAYS * 24; // number of hourly buckets to render
+
+// ── Tooltip ───────────────────────────────────────────────────────────────
+const tooltip    = document.getElementById('tooltip');
+const ttTime     = document.getElementById('tt-time');
+const ttAvail    = document.getElementById('tt-avail');
+const ttLat      = document.getElementById('tt-lat');
+
+document.addEventListener('mousemove', e => {
+  const pad = 12;
+  let x = e.clientX + pad;
+  let y = e.clientY + pad;
+  const tw = tooltip.offsetWidth + 8;
+  const th = tooltip.offsetHeight + 8;
+  if (x + tw > window.innerWidth)  x = e.clientX - tw;
+  if (y + th > window.innerHeight) y = e.clientY - th;
+  tooltip.style.left = x + 'px';
+  tooltip.style.top  = y + 'px';
+});
+
+function showTooltip(bucket) {
+  const hour = new Date(bucket.hour);
+  const hourStr = hour.toLocaleString('cs-CZ', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+  ttTime.textContent = hourStr;
+
+  if (bucket.avail === -1) {
+    ttAvail.textContent = 'Žádná data';
+    ttAvail.className = 't-avail partial';
+    ttLat.textContent = '';
+  } else {
+    const pct = (bucket.avail * 100).toFixed(1);
+    ttAvail.textContent = `Dostupnost: ${pct}%`;
+    ttAvail.className = 't-avail ' + (bucket.avail >= .99 ? 'up' : bucket.avail > 0 ? 'partial' : 'down');
+    ttLat.textContent = bucket.avg_lat_ms > 0
+      ? `Ø latence: ${Math.round(bucket.avg_lat_ms)} ms`
+      : '';
+  }
+  tooltip.classList.add('visible');
+}
+
+function hideTooltip() {
+  tooltip.classList.remove('visible');
+}
+
+// ── Bucket grid helpers ───────────────────────────────────────────────────
+function buildBucketMap(buckets) {
+  const map = {};
+  for (const b of buckets) {
+    const h = Math.floor(new Date(b.hour).getTime() / 3600000) * 3600000;
+    map[h] = b;
+  }
+  return map;
+}
+
+function bucketClass(b) {
+  if (!b || b.avail === -1) return 'no-data';
+  if (b.avail >= .999) return 'up full';
+  if (b.avail >= .95)  return 'up high';
+  if (b.avail >= .5)   return 'up partial';
+  if (b.avail > 0)     return 'down partial';
+  return 'down';
+}
+
+// ── Render ────────────────────────────────────────────────────────────────
+function renderStatus(data) {
+  const main = document.getElementById('main');
+  main.innerHTML = '';
+
+  // Overall status
+  const endpointsUp   = data.endpoints.filter(e => e.current?.up).length;
+  const endpointsDown = data.endpoints.filter(e => e.current && !e.current.up).length;
+  const dot   = document.getElementById('overall-dot');
+  const label = document.getElementById('overall-label');
+  const sub   = document.getElementById('overall-sub');
+
+  if (endpointsDown === 0) {
+    dot.className = 'status-dot up';
+    label.textContent = 'Všechny systémy fungují';
+    sub.textContent = `${endpointsUp} z ${data.endpoints.length} endpointů je dostupných`;
+  } else if (endpointsUp === 0) {
+    dot.className = 'status-dot down';
+    label.textContent = 'Systémový výpadek';
+    sub.textContent = `${endpointsDown} endpointů je nedostupných`;
+  } else {
+    dot.className = 'status-dot partial';
+    label.textContent = 'Částečný výpadek';
+    sub.textContent = `${endpointsDown} z ${data.endpoints.length} endpointů nefunguje`;
+  }
+
+  const genAt = new Date(data.generated_at);
+  document.getElementById('last-updated').textContent =
+    'Aktualizováno: ' + genAt.toLocaleString('cs-CZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  document.getElementById('footer-ts').textContent =
+    genAt.toLocaleString('cs-CZ');
+
+  // Now: bucket slots (last 30 days × 24h)
+  const now     = Date.now();
+  const slotMs  = 3600000;
+  const nowSlot = Math.floor(now / slotMs) * slotMs;
+
+  // Group endpoints
+  const groups = {};
+  for (const ep of data.endpoints) {
+    if (!groups[ep.group]) groups[ep.group] = [];
+    groups[ep.group].push(ep);
+  }
+
+  let epIdx = 0;
+  for (const [groupName, eps] of Object.entries(groups)) {
+    const gh = document.createElement('div');
+    gh.className = 'group-header';
+    gh.innerHTML = `<h2>${groupName}</h2>`;
+    main.appendChild(gh);
+
+    for (const ep of eps) {
+      const bucketMap = buildBucketMap(ep.buckets || []);
+      const card = document.createElement('div');
+      card.className = 'endpoint';
+      card.style.animationDelay = (epIdx * 40) + 'ms';
+
+      // Header
+      const badge = ep.current
+        ? (ep.current.up ? '<span class="ep-badge up">online</span>' : '<span class="ep-badge down">offline</span>')
+        : '<span class="ep-badge unknown">–</span>';
+
+      const uptime = ep.uptime_30d > 0
+        ? `${ep.uptime_30d.toFixed(2)}%`
+        : '–';
+
+      card.innerHTML = `
+        <div class="endpoint-header">
+          <div class="ep-name">${ep.name}</div>
+          <div class="ep-uptime">${uptime} za 30 dní</div>
+          ${badge}
+        </div>
+        ${ep.current?.latency_ms ? `<div class="ep-latency">latence: <span>${ep.current.latency_ms} ms</span> · status: <span>${ep.current.status_code || '–'}</span></div>` : ''}
+        <div class="timeline">
+          <div class="timeline-labels">
+            <span>30 dní</span>
+            <span>15 dní</span>
+            <span>dnes</span>
+          </div>
+          <div class="buckets" id="buckets-${ep.id}"></div>
+        </div>
+      `;
+
+      main.appendChild(card);
+
+      // Build bucket cells
+      const bucketsEl = document.getElementById(`buckets-${ep.id}`);
+      for (let i = HOURS - 1; i >= 0; i--) {
+        const slotTime = nowSlot - i * slotMs;
+        const b = bucketMap[slotTime] || null;
+
+        const cell = document.createElement('div');
+        cell.className = 'bucket ' + bucketClass(b);
+        cell.title = '';
+
+        const fakeBucket = b || { hour: new Date(slotTime).toISOString(), avail: -1, avg_lat_ms: 0 };
+        cell.addEventListener('mouseenter', () => showTooltip(fakeBucket));
+        cell.addEventListener('mouseleave', hideTooltip);
+
+        bucketsEl.appendChild(cell);
+      }
+
+      epIdx++;
+    }
+  }
+}
+
+// ── Fetch ─────────────────────────────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/api/status`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderStatus(data);
+  } catch (err) {
+    document.getElementById('main').innerHTML = `
+      <div class="state-msg">
+        <div class="big">⚠</div>
+        <div>Nepodařilo se načíst data ze status API.</div>
+        <div style="margin-top:8px;font-size:.7rem;color:#444">${err.message}</div>
+      </div>`;
+    document.getElementById('overall-label').textContent = 'Stav nedostupný';
+  }
+}
+
+fetchStatus();
+// Auto-refresh every 5 minutes
+setInterval(fetchStatus, 5 * 60 * 1000);
+</script>
+</body>
+</html>

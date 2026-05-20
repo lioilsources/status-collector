@@ -1,0 +1,18 @@
+status.ol1n.com {
+    # Reverse proxy API calls to the Go collector
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8765
+    }
+
+    # Serve the static frontend
+    handle {
+        root * /var/lib/ol1n-status/web
+        file_server
+        try_files {path} /index.html
+    }
+
+    log {
+        output file /var/log/caddy/status.ol1n.com.log
+        format json
+    }
+}

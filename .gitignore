@@ -1,0 +1,6 @@
+bin/
+*.db
+*.db-wal
+*.db-shm
+bin/status-collector
+.DS_Store

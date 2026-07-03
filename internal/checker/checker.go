@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -15,20 +16,34 @@ import (
 
 // Endpoint describes a single monitored endpoint.
 type Endpoint struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Group       string `json:"group"`
-	URL         string `json:"url"`
-	Method      string `json:"method"`
-	Body        string `json:"body,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Group       string            `json:"group"`
+	URL         string            `json:"url"`
+	Method      string            `json:"method"`
+	Body        string            `json:"body,omitempty"`
+	ContentType string            `json:"content_type,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
 	// ExpectStatus: if 0, any 2xx counts as up.
 	ExpectStatus int `json:"expect_status,omitempty"`
 }
 
-// DefaultEndpoints returns the standard LLM stack endpoints for llm.ol1n.com.
+// cfAccessHeaders returns Cloudflare Access service-token headers from environment variables.
+func cfAccessHeaders() map[string]string {
+	h := map[string]string{}
+	if id := os.Getenv("CF_ACCESS_CLIENT_ID"); id != "" {
+		h["CF-Access-Client-Id"] = id
+	}
+	if secret := os.Getenv("CF_ACCESS_CLIENT_SECRET"); secret != "" {
+		h["CF-Access-Client-Secret"] = secret
+	}
+	return h
+}
+
+// DefaultEndpoints returns the standard monitored endpoints.
 func DefaultEndpoints() []Endpoint {
 	base := "https://llm.ol1n.com"
+	cf := cfAccessHeaders()
 	return []Endpoint{
 		// ── Health ─────────────────────────────────────────────────────────
 		{
@@ -103,6 +118,35 @@ func DefaultEndpoints() []Endpoint {
 			Name:  "GET /tokenize",
 			Group: "vLLM",
 			URL:   base + "/tokenize?text=ping",
+		},
+		// ── ComfyUI ────────────────────────────────────────────────────────
+		{
+			ID:      "comfyui_stats",
+			Name:    "ComfyUI System Stats",
+			Group:   "ComfyUI",
+			URL:     "https://comfyui.ol1n.com/system_stats",
+			Headers: cf,
+		},
+		{
+			ID:      "comfyui_queue",
+			Name:    "ComfyUI Queue",
+			Group:   "ComfyUI",
+			URL:     "https://comfyui.ol1n.com/queue",
+			Headers: cf,
+		},
+		// ── Sonarr ─────────────────────────────────────────────────────────
+		{
+			ID:    "sonarr_ping",
+			Name:  "Sonarr Ping",
+			Group: "Sonarr",
+			URL:   "http://localhost:8989/ping",
+		},
+		// ── Radarr ─────────────────────────────────────────────────────────
+		{
+			ID:    "radarr_ping",
+			Name:  "Radarr Ping",
+			Group: "Radarr",
+			URL:   "http://localhost:7878/ping",
 		},
 	}
 }
@@ -179,6 +223,9 @@ func (c *Checker) checkEndpoint(ctx context.Context, ep Endpoint) storage.Check 
 	}
 	if ep.ContentType != "" {
 		req.Header.Set("Content-Type", ep.ContentType)
+	}
+	for k, v := range ep.Headers {
+		req.Header.Set(k, v)
 	}
 
 	start := time.Now()

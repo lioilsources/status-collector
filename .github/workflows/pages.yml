@@ -34,10 +34,11 @@ jobs:
       API_BASE: https://status-api.ol1n.com
       # Directory holding status.json / comfy.json, force-pushed by the NAS.
       SNAPSHOT_BASE: https://raw.githubusercontent.com/${{ github.repository }}/data
-      # Set this ONLY once status.ol1n.com actually points at GitHub Pages.
-      # Writing a CNAME before the DNS record exists makes the default
-      # *.github.io URL redirect to a domain that does not resolve.
-      CUSTOM_DOMAIN: ''
+      # Only safe now that status.ol1n.com resolves to GitHub Pages
+      # (CNAME -> lioilsources.github.io, DNS only). Writing a CNAME before
+      # that record existed would have redirected the working *.github.io URL
+      # to a domain that does not resolve.
+      CUSTOM_DOMAIN: status.ol1n.com
     steps:
       - name: Checkout
         uses: actions/checkout@v4

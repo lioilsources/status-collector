@@ -81,7 +81,10 @@ deploy/                        # systemd units, Caddy snippet, publish script
   reintroduce a cgo driver: the NAS deploy is a downloaded binary and has no
   toolchain.
 - State: `/var/lib/ol1n-status/status.db`, snapshot in `snapshot/` beside it.
-- Service user/group: `ol1n`.
+- Service user/group: `ol1n` by default, overridable with `OL1N_USER`.
+  install.sh rewrites `User=`/`Group=` in the units to match, because chowning
+  the data directory to one user while systemd runs the service as another
+  fails at runtime with nothing obvious in the logs.
 - Frontend has **no build step and no dependencies**. Keep it that way; the only
   external reference is the Google Fonts `@import`.
 - `<meta name="api-base">` and `<meta name="snapshot-base">` are left empty in

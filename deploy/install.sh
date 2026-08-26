@@ -44,9 +44,13 @@ echo "==> data directories"
 sudo mkdir -p "$DATA_DIR" "$SNAPSHOT_DIR"
 sudo chown -R "$USER:$USER" "$DATA_DIR"
 
-echo "==> systemd units"
+echo "==> systemd units (running as $USER)"
 for unit in ol1n-status.service ol1n-status-snapshot.service ol1n-status-snapshot.timer; do
-    sudo cp "$UNIT_DIR/$unit" /etc/systemd/system/
+    # The units ship with the default user baked in; rewrite it on the way in so
+    # OL1N_USER actually takes effect. Without this the data directory would be
+    # chowned to one user while systemd ran the service as another.
+    sed -e "s/^User=.*/User=$USER/" -e "s/^Group=.*/Group=$USER/" "$UNIT_DIR/$unit" \
+        | sudo tee "/etc/systemd/system/$unit" > /dev/null
 done
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$SERVICE"

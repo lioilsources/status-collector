@@ -120,6 +120,10 @@ Každý krok je funkční sám o sobě; stránka se s každým dalším zlepší
 Na NASu není potřeba Go, gcc ani klon tohoto repa — stačí `curl` a `tar`:
 
 ```bash
+# Vyhrazený systémový účet — démon drží deploy key se zápisem do repa,
+# takže nemá běžet pod tvým osobním účtem.
+id ol1n || sudo useradd --system --home /var/lib/ol1n-status --shell /usr/sbin/nologin ol1n
+
 ARCH=$(dpkg --print-architecture)          # amd64 nebo arm64
 cd /tmp
 curl -fsSLO "https://github.com/lioilsources/status-collector/releases/latest/download/status-collector_linux_${ARCH}.tar.gz"
@@ -127,6 +131,9 @@ tar xzf "status-collector_linux_${ARCH}.tar.gz"
 cd "status-collector_linux_${ARCH}"
 sudo ./install.sh
 ```
+
+Chceš to pod jiným účtem? `OL1N_USER=jmeno sudo -E ./install.sh` — `install.sh`
+to jméno propíše i do systemd unitů.
 
 Tarball obsahuje binárku, `install.sh`, `publish-snapshot.sh` a systemd unity.
 Aktualizace = totéž znovu.

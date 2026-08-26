@@ -131,6 +131,13 @@ sudo ./install.sh
 Tarball obsahuje binárku, `install.sh`, `publish-snapshot.sh` a systemd unity.
 Aktualizace = totéž znovu.
 
+Nový release se vydá tagem:
+```bash
+git tag -a v0.2.0 -m "..." && git push origin v0.2.0
+# kdyby push tagu workflow nespustil:
+gh workflow run release.yml -f tag=v0.2.0
+```
+
 <details>
 <summary>Build ze zdrojáků (když už Go na stroji máš)</summary>
 

@@ -5,14 +5,24 @@
 # cross-compile — no cross toolchain, no static-linking flags, no glibc
 # version to worry about on the target.
 #
-#   push a tag v*     → publishes a GitHub Release with both architectures
-#   workflow_dispatch → builds and uploads artifacts only, publishing nothing
+#   push a tag v*            → publishes a GitHub Release with both architectures
+#   workflow_dispatch, no tag → builds and uploads artifacts only, publishes nothing
+#   workflow_dispatch + tag   → publishes that existing tag as a Release
+#
+# The manual path exists because a tag pushed in the same breath as the commit
+# that introduced this file did not fire the push trigger; with it, a release
+# never depends on that timing.
 name: Release binaries
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish as a Release (leave empty to only build artifacts)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -26,6 +36,8 @@ jobs:
         arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -68,7 +80,7 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -79,11 +91,12 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           ls -la dist
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release create "$TAG" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "${GITHUB_REF_NAME}" \
+            --title "$TAG" \
             --generate-notes \
             dist/*

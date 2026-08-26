@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build from source on this machine, then install.
 #
-# Needs Go and gcc here. If you would rather not have a toolchain on the NAS,
-# use a release instead — see README, "Instalace z release".
+# Needs Go here — but not a C compiler, and not on the NAS: SQLite is pure Go,
+# so `make build-linux` on any machine produces a binary the NAS can run.
+# Easiest of all is a release; see README, "Instalace z release".
 #
 # The frontend is NOT deployed from here: pushing to main deploys web/ to
 # GitHub Pages via .github/workflows/pages.yml.
@@ -13,6 +14,6 @@ repo=$(cd "$here/.." && pwd)
 
 echo "==> building"
 cd "$repo"
-CGO_ENABLED=1 go build -ldflags="-s -w" -o /tmp/status-collector ./cmd/status-collector
+CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/status-collector ./cmd/status-collector
 
 exec "$here/install.sh" /tmp/status-collector

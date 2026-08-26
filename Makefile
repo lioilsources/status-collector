@@ -1,7 +1,12 @@
-.PHONY: build test install logs status
+.PHONY: build build-linux test install logs status
 
 build:
-	CGO_ENABLED=1 go build -ldflags="-s -w" -o bin/status-collector ./cmd/status-collector
+	CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/status-collector ./cmd/status-collector
+
+# Cross-compile for the NAS. Pure-Go SQLite means no toolchain juggling.
+build-linux:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/status-collector-linux-amd64 ./cmd/status-collector
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o bin/status-collector-linux-arm64 ./cmd/status-collector
 
 test:
 	go test ./...

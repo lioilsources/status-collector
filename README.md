@@ -116,9 +116,33 @@ ignoruje pokles čítačů po rebootu, aby nevznikl falešný špičkový údaj.
 Každý krok je funkční sám o sobě; stránka se s každým dalším zlepší.
 
 **1. Collector na NAS**
+
+Na NASu není potřeba Go, gcc ani klon tohoto repa — stačí `curl` a `tar`:
+
 ```bash
-./deploy/deploy.sh
+ARCH=$(dpkg --print-architecture)          # amd64 nebo arm64
+cd /tmp
+curl -fsSLO "https://github.com/lioilsources/status-collector/releases/latest/download/status-collector_linux_${ARCH}.tar.gz"
+tar xzf "status-collector_linux_${ARCH}.tar.gz"
+cd "status-collector_linux_${ARCH}"
+sudo ./install.sh
 ```
+
+Tarball obsahuje binárku, `install.sh`, `publish-snapshot.sh` a systemd unity.
+Aktualizace = totéž znovu.
+
+<details>
+<summary>Build ze zdrojáků (když už Go na stroji máš)</summary>
+
+```bash
+./deploy/deploy.sh          # build + install na tomhle stroji
+make build-linux            # jen zkřížit binárku pro NAS odkudkoliv
+```
+
+SQLite je `modernc.org/sqlite`, tedy čisté Go — `CGO_ENABLED=0` funguje a
+binárka se dá zkompilovat i z macOS pro linux/amd64 i arm64.
+</details>
+
 Vytvoř `/etc/default/ol1n-status`:
 ```
 COMFY_FLAG="-comfy http://192.168.1.50:8188"
@@ -195,6 +219,7 @@ proto běží gauge sampler na vlastních hodinách.
 
 ```bash
 make build            # → bin/status-collector
+make build-linux      # → bin/status-collector-linux-{amd64,arm64}
 make test             # go test ./...
 make logs             # journalctl -u ol1n-status -f
 ```

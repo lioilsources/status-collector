@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type DB struct {
@@ -84,7 +84,11 @@ func New(path string) (*DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
-	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000")
+	// modernc.org/sqlite is a pure-Go translation of SQLite, so the collector
+	// cross-compiles anywhere with CGO_ENABLED=0. It takes PRAGMAs through
+	// _pragma= rather than the driver-specific keys mattn/go-sqlite3 used.
+	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}

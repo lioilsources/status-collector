@@ -39,13 +39,17 @@ raw.githubusercontent.com/<repo>/data/status.json, and labels stale data.
 ## Build & Deploy
 
 ```bash
-make build      # → bin/status-collector
-make test       # go test ./...
-make install    # sudo install + systemctl restart ol1n-status
-make logs       # journalctl -u ol1n-status -f
+make build        # → bin/status-collector
+make build-linux  # → bin/status-collector-linux-{amd64,arm64}
+make test         # go test ./...
+make logs         # journalctl -u ol1n-status -f
 
-./deploy/deploy.sh   # full NAS install: binary, publish script, units, timer
+./deploy/deploy.sh          # build here, then install (needs Go on this machine)
+./deploy/install.sh <bin>   # install only — what the release tarball runs
 ```
+
+The NAS installs from a release tarball (`.github/workflows/release.yml`), so it
+needs neither a toolchain nor a checkout. Tag `v*` to publish one.
 
 Frontend deploys on push to `main` via `.github/workflows/pages.yml`. Never push
 a `gh-pages` branch — with Pages Source set to GitHub Actions that push silently
@@ -61,6 +65,7 @@ internal/api/api.go            # /api/status, /api/comfy, /api/history, snapshot
 internal/checker/checker.go    # HTTP health probes; DefaultEndpoints(comfyBase)
 internal/comfy/comfy.go        # ComfyUI poller: gauges + job history
 internal/host/host.go          # machine metrics: /proc locally, node_exporter remotely
+internal/host/disk.go          # statfs wrapper (Bsize differs across platforms)
 internal/storage/storage.go    # SQLite: checks, metrics, comfy_jobs
 
 web/index.html                 # single-file frontend, no build step
@@ -71,7 +76,10 @@ deploy/                        # systemd units, Caddy snippet, publish script
 
 ## Conventions
 
-- CGO enabled — SQLite via `github.com/mattn/go-sqlite3`. No cross-compile.
+- SQLite is `modernc.org/sqlite` — pure Go, so `CGO_ENABLED=0` builds and the
+  binary cross-compiles to linux/amd64 and linux/arm64 from any machine. Do not
+  reintroduce a cgo driver: the NAS deploy is a downloaded binary and has no
+  toolchain.
 - State: `/var/lib/ol1n-status/status.db`, snapshot in `snapshot/` beside it.
 - Service user/group: `ol1n`.
 - Frontend has **no build step and no dependencies**. Keep it that way; the only

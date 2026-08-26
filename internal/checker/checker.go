@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -28,23 +27,12 @@ type Endpoint struct {
 	ExpectStatus int `json:"expect_status,omitempty"`
 }
 
-// cfAccessHeaders returns Cloudflare Access service-token headers from environment variables.
-func cfAccessHeaders() map[string]string {
-	h := map[string]string{}
-	if id := os.Getenv("CF_ACCESS_CLIENT_ID"); id != "" {
-		h["CF-Access-Client-Id"] = id
-	}
-	if secret := os.Getenv("CF_ACCESS_CLIENT_SECRET"); secret != "" {
-		h["CF-Access-Client-Secret"] = secret
-	}
-	return h
-}
-
 // DefaultEndpoints returns the standard monitored endpoints.
-func DefaultEndpoints() []Endpoint {
+// comfyBase is the ComfyUI base URL (e.g. http://192.168.1.50:8188); when empty,
+// the ComfyUI endpoints are omitted entirely.
+func DefaultEndpoints(comfyBase string) []Endpoint {
 	base := "https://llm.ol1n.com"
-	cf := cfAccessHeaders()
-	return []Endpoint{
+	eps := []Endpoint{
 		// ── Health ─────────────────────────────────────────────────────────
 		{
 			ID:    "health",
@@ -80,13 +68,13 @@ func DefaultEndpoints() []Endpoint {
 			ExpectStatus: 200,
 		},
 		{
-			ID:          "openai_completions",
-			Name:        "POST /v1/completions",
-			Group:       "OpenAI API",
-			URL:         base + "/v1/completions",
-			Method:      "POST",
-			ContentType: "application/json",
-			Body:        `{"model":"__auto__","max_tokens":1,"prompt":"ping"}`,
+			ID:           "openai_completions",
+			Name:         "POST /v1/completions",
+			Group:        "OpenAI API",
+			URL:          base + "/v1/completions",
+			Method:       "POST",
+			ContentType:  "application/json",
+			Body:         `{"model":"__auto__","max_tokens":1,"prompt":"ping"}`,
 			ExpectStatus: 200,
 		},
 		{
@@ -119,21 +107,6 @@ func DefaultEndpoints() []Endpoint {
 			Group: "vLLM",
 			URL:   base + "/tokenize?text=ping",
 		},
-		// ── ComfyUI ────────────────────────────────────────────────────────
-		{
-			ID:      "comfyui_stats",
-			Name:    "ComfyUI System Stats",
-			Group:   "ComfyUI",
-			URL:     "https://comfyui.ol1n.com/system_stats",
-			Headers: cf,
-		},
-		{
-			ID:      "comfyui_queue",
-			Name:    "ComfyUI Queue",
-			Group:   "ComfyUI",
-			URL:     "https://comfyui.ol1n.com/queue",
-			Headers: cf,
-		},
 		// ── Sonarr ─────────────────────────────────────────────────────────
 		{
 			ID:    "sonarr_ping",
@@ -149,6 +122,29 @@ func DefaultEndpoints() []Endpoint {
 			URL:   "http://localhost:7878/ping",
 		},
 	}
+
+	// ── ComfyUI ────────────────────────────────────────────────────────
+	// Reached directly over the LAN, so no Cloudflare Access service token
+	// is involved — going through comfyui.ol1n.com would need one.
+	if comfyBase != "" {
+		comfyBase = strings.TrimSuffix(comfyBase, "/")
+		eps = append(eps,
+			Endpoint{
+				ID:    "comfyui_stats",
+				Name:  "ComfyUI System Stats",
+				Group: "ComfyUI",
+				URL:   comfyBase + "/system_stats",
+			},
+			Endpoint{
+				ID:    "comfyui_queue",
+				Name:  "ComfyUI Queue",
+				Group: "ComfyUI",
+				URL:   comfyBase + "/queue",
+			},
+		)
+	}
+
+	return eps
 }
 
 // Checker runs health checks against all endpoints.

@@ -1,0 +1,13 @@
+[Unit]
+Description=Publish the ol1n-status snapshot every 15 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+# Keep every NAS in the world from pushing on the same second.
+RandomizedDelaySec=60s
+Persistent=true
+Unit=ol1n-status-snapshot.service
+
+[Install]
+WantedBy=timers.target

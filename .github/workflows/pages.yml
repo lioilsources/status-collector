@@ -1,0 +1,76 @@
+# Publishes web/ to GitHub Pages. web/ is hand-written HTML with no build step,
+# so the only work here is stamping the deploy-time endpoints into the page.
+#
+# Before the first run: repo Settings → Pages → Source: **GitHub Actions**.
+# Do not push to a gh-pages branch — with Source set to Actions that push
+# silently does nothing while the live site goes stale.
+name: Deploy status page
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      # Live collector API. Leave empty to make the page read only the snapshot.
+      API_BASE: https://status-api.ol1n.com
+      # Directory holding status.json / comfy.json, force-pushed by the NAS.
+      SNAPSHOT_BASE: https://raw.githubusercontent.com/${{ github.repository }}/data
+      # Set this ONLY once status.ol1n.com actually points at GitHub Pages.
+      # Writing a CNAME before the DNS record exists makes the default
+      # *.github.io URL redirect to a domain that does not resolve.
+      CUSTOM_DOMAIN: ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Stamp API endpoints into the page
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, re
+          page = pathlib.Path('web/index.html')
+          html = page.read_text()
+          for name, value in (('api-base', os.environ['API_BASE']),
+                              ('snapshot-base', os.environ['SNAPSHOT_BASE'])):
+              pattern = f'<meta name="{name}" content="">'
+              if pattern not in html:
+                  raise SystemExit(f'meta tag {name} not found or already filled')
+              html = html.replace(pattern, f'<meta name="{name}" content="{value}">')
+          page.write_text(html)
+          PY
+          grep -n 'meta name="api-base"\|meta name="snapshot-base"' web/index.html
+
+      - name: Custom domain
+        if: env.CUSTOM_DOMAIN != ''
+        run: echo "$CUSTOM_DOMAIN" > web/CNAME
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,5 +1,5 @@
 [Unit]
-Description=ol1n Status Collector
+Description=ol1n status collector
 After=network-online.target
 Wants=network-online.target
 
@@ -7,17 +7,29 @@ Wants=network-online.target
 Type=simple
 User=ol1n
 Group=ol1n
+
+# Optional overrides; the leading '-' makes the file optional.
+#   /etc/default/ol1n-status
+#   COMFY_FLAG="-comfy http://192.168.1.50:8188"
+# Unbraced $COMFY_FLAG is split on whitespace by systemd, so it expands to two
+# arguments — or to nothing at all when the file or the variable is absent.
+EnvironmentFile=-/etc/default/ol1n-status
+
 ExecStart=/usr/local/bin/status-collector \
     -db    /var/lib/ol1n-status/status.db \
     -addr  127.0.0.1:8765 \
-    -interval 1h
+    -interval 1h \
+    -sample-interval 60s \
+    -snapshot-dir /var/lib/ol1n-status/snapshot \
+    $COMFY_FLAG
+
 Restart=on-failure
 RestartSec=10s
+
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ol1n-status
 
-# Data dir permissions
 ReadWritePaths=/var/lib/ol1n-status
 
 [Install]

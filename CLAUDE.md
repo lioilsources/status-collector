@@ -2,75 +2,86 @@
 
 ## Overview
 
-Status page for `llm.ol1n.com`. A Go binary (`status-collector`) runs on the NAS, pings LLM endpoints hourly, stores results in SQLite, and exposes a JSON API. A static HTML frontend fetches the API and renders 30-day uptime grid.
+Status page for `llm.ol1n.com`. A Go binary (`status-collector`) runs on the NAS,
+probes endpoints hourly, samples ComfyUI metrics every minute, stores everything
+in SQLite and exposes a JSON API. The static frontend is hosted on **GitHub
+Pages**, deliberately off the NAS — a status page served by the machine it
+monitors is unreachable exactly when it is needed.
 
-Live at: `status.ol1n.com`
+Live at: `status.ol1n.com` (GitHub Pages) · API at `status-api.ol1n.com` (NAS).
 
 ## Architecture
 
 ```
 NAS (Ubuntu)
-  └─ status-collector (Go binary, systemd)
-       ├─ hourly: ping all endpoints → SQLite
+  └─ status-collector (Go binary, systemd) — three independent clocks
+       ├─ -interval 1h        availability probes   → checks
+       ├─ -sample-interval 1m ComfyUI gauges        → metrics
+       ├─ -drain-interval 5m  ComfyUI /history      → comfy_jobs
+       ├─ -snapshot-interval 5m  writes status.json + comfy.json
        └─ HTTP API on 127.0.0.1:8765
-            ├─ GET /api/status       → JSON (frontend consumes this)
-            └─ GET /api/history/{id} → raw hourly buckets
+            ├─ GET /api/status        → availability + hourly buckets
+            ├─ GET /api/comfy         → ComfyUI metrics
+            └─ GET /api/history/{id}  → raw hourly buckets
 
-Caddy (NAS)
-  └─ status.ol1n.com
-       ├─ /api/* → proxy to :8765
-       └─ /*     → static web/ directory
+  └─ systemd timer (15m) → deploy/publish-snapshot.sh
+       force-pushes the snapshot to the repo's orphan `data` branch
 
-Cloudflare Tunnel → NAS Caddy
+Caddy (NAS) → status-api.ol1n.com → :8765, via Cloudflare Tunnel
+GitHub Actions → GitHub Pages → status.ol1n.com
+
+Frontend tries the live API first, falls back to
+raw.githubusercontent.com/<repo>/data/status.json, and labels stale data.
 ```
 
 ## Build & Deploy
 
 ```bash
-# Build
-make build          # → bin/status-collector
+make build      # → bin/status-collector
+make test       # go test ./...
+make install    # sudo install + systemctl restart ol1n-status
+make logs       # journalctl -u ol1n-status -f
 
-# Deploy to NAS (install + restart systemd service)
-make install        # sudo install + systemctl restart ol1n-status
-
-# Logs
-make logs           # journalctl -u ol1n-status -f
-
-# Status
-make status
+./deploy/deploy.sh   # full NAS install: binary, publish script, units, timer
 ```
+
+Frontend deploys on push to `main` via `.github/workflows/pages.yml`. Never push
+a `gh-pages` branch — with Pages Source set to GitHub Actions that push silently
+does nothing while the live site goes stale.
 
 ## Project Structure
 
 ```
-cmd/status-collector/
-  main.go           # HTTP server + hourly tick
-  api.go            # /api/status, /api/history/{id} handlers
+cmd/status-collector/main.go   # flags, the three tickers, HTTP server
+cmd/seed-demo/main.go          # dev-only: fake data + snapshot for frontend work
 
-internal/
-  api/              # HTTP handler helpers
-  checker/          # HTTP health probes for each endpoint
-  storage/          # SQLite read/write (hourly buckets)
+internal/api/api.go            # /api/status, /api/comfy, /api/history, snapshot writer
+internal/checker/checker.go    # HTTP health probes; DefaultEndpoints(comfyBase)
+internal/comfy/comfy.go        # ComfyUI poller: gauges + job history
+internal/storage/storage.go    # SQLite: checks, metrics, comfy_jobs
 
-web/
-  index.html        # Static frontend (IBM Plex Mono, dark theme)
+web/index.html                 # single-file frontend, no build step
+web/CNAME                      # written by the workflow, only when DNS is ready
 
-deploy/
-  ol1n-status.service   # systemd unit
-  Caddyfile.snippet     # Caddy reverse proxy config
-  deploy.sh
+deploy/                        # systemd units, Caddy snippet, publish script
 ```
-
-## Monitored Endpoints
-
-Defined in collector config. Key ones:
-- `GET /health` — vLLM health
-- `GET /ping` — gateway ping
-- `GET /v1/models` — OpenAI-compatible model list
 
 ## Conventions
 
-- CGO enabled (SQLite via `modernc.org/sqlite` or cgo)
-- Binary must be cross-compiled for NAS (Linux/amd64 or arm64)
-- State file: `/var/lib/ol1n-status/status.db`
-- Service user: check systemd unit for user/group
+- CGO enabled — SQLite via `github.com/mattn/go-sqlite3`. No cross-compile.
+- State: `/var/lib/ol1n-status/status.db`, snapshot in `snapshot/` beside it.
+- Service user/group: `ol1n`.
+- Frontend has **no build step and no dependencies**. Keep it that way; the only
+  external reference is the Google Fonts `@import`.
+- `<meta name="api-base">` and `<meta name="snapshot-base">` are left empty in
+  the repo and stamped by the workflow. Empty means "same origin", so the file
+  works when opened locally.
+- Availability is drawn as a cell grid (a handful of states); every magnitude
+  over time is a line chart. Series colours live in the `--series-*` custom
+  properties and were validated for the dark chart surface — do not add a hue
+  without re-checking CVD separation, and keep green/red/amber reserved for
+  status.
+- ComfyUI history reads must stay idempotent: upsert by `prompt_id`, never
+  insert. ComfyUI drops its history on restart, so `comfy_jobs` is the record.
+- New tables use `CREATE TABLE IF NOT EXISTS`; there is no migration version
+  table, so any future `ALTER` must tolerate being re-run.

@@ -1,46 +1,61 @@
-# Cloudflare Tunnel — přidání hostname status.ol1n.com
+# Cloudflare — DNS a Tunnel
 
-Předpoklad: cloudflared tunnel na NASu již běží.
+Po přesunu frontendu na GitHub Pages má `ol1n.com` dva různé záznamy:
 
-## Varianta A — Zero Trust Dashboard (doporučeno)
+| Hostname              | Kam                | Typ záznamu                              |
+|-----------------------|--------------------|------------------------------------------|
+| `status.ol1n.com`     | GitHub Pages       | `CNAME → lioilsources.github.io`, **DNS only** |
+| `status-api.ol1n.com` | NAS Caddy → :8765  | vytvoří Cloudflare Tunnel automaticky    |
 
-1. Otevřít https://one.dash.cloudflare.com → **Networks → Tunnels**
-2. Kliknout na existující tunnel → **Configure → Public Hostnames**
-3. **Add a public hostname:**
-   - Subdomain: `status`
-   - Domain: `ol1n.com`
-   - Type: `HTTP`
-   - URL: `127.0.0.1:80`
-4. Uložit
+## 1. API hostname v tunelu
 
-## Varianta B — cloudflared CLI na NASu
+Předpoklad: `cloudflared` tunnel na NASu už běží.
 
+**Zero Trust Dashboard:** https://one.dash.cloudflare.com → **Networks → Tunnels**
+→ existující tunnel → **Configure → Public Hostnames → Add a public hostname**
+
+- Subdomain: `status-api`
+- Domain: `ol1n.com`
+- Type: `HTTP`
+- URL: `http://127.0.0.1:80` (Caddy)
+
+**Nebo přes CLI:**
 ```bash
-# Přidat DNS záznam (CNAME na tunnel)
-cloudflared tunnel route dns <TUNNEL_NAME> status.ol1n.com
-
-# Přidat ingress do config.yml
-# Obvykle: ~/.cloudflared/config.yml nebo /etc/cloudflared/config.yml
+cloudflared tunnel route dns <TUNNEL_NAME> status-api.ol1n.com
 ```
-
-Přidat do sekce `ingress` (před fallback pravidlo):
+a do `config.yml` mezi `ingress:`:
 ```yaml
-ingress:
-  - hostname: status.ol1n.com
+  - hostname: status-api.ol1n.com
     service: http://127.0.0.1:80
-  - service: http_status:404   # fallback — musí být poslední
 ```
 
+Ověření:
 ```bash
-sudo systemctl restart cloudflared
+curl -i https://status-api.ol1n.com/api/status | head -20
+```
+Musí přijít `200` a hlavička `access-control-allow-origin: *` — bez ní si
+stránka na Pages data nepřečte.
+
+## 2. DNS pro GitHub Pages
+
+V Cloudflare DNS pro zónu `ol1n.com`:
+
+```
+CNAME   status   lioilsources.github.io   (Proxy status: DNS only — šedý mráček)
 ```
 
-## Ověření
+**Šedý mráček je důležitý.** S proxy si GitHub nedokáže doménu ověřit,
+certifikát se nevydá a *Enforce HTTPS* zůstane šedé. Až certifikát naskočí
+(repo Settings → Pages), jde volitelně přepnout na proxied + SSL **Full (strict)**.
 
-```bash
-# Tunnel connected
-cloudflared tunnel info <TUNNEL_NAME>
-
-# Veřejný přístup
-curl https://status.ol1n.com/api/status
+Teprve potom nastav v `.github/workflows/pages.yml`:
+```yaml
+CUSTOM_DOMAIN: status.ol1n.com
 ```
+Dřív ne — CNAME soubor v artefaktu přesměruje `lioilsources.github.io/status-collector/`
+na doménu, která ještě neexistuje, a status page je nedostupná úplně.
+
+## 3. Co se smazalo
+
+Starý public hostname `status.ol1n.com → http://127.0.0.1:80` v tunelu už není
+potřeba a musí zmizet, jinak si bude s DNS záznamem pro Pages konkurovat.

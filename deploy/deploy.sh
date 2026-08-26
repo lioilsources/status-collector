@@ -1,38 +1,36 @@
 #!/usr/bin/env bash
-# deploy.sh — build and deploy ol1n-status-collector na NAS
-# Spouštěj z rootu repozitáře: ./deploy/deploy.sh
+# Build and install the collector on the NAS.
+#
+# The frontend is NOT deployed from here any more — pushing to main deploys
+# web/ to GitHub Pages via .github/workflows/pages.yml.
 set -euo pipefail
 
 BINARY=/usr/local/bin/status-collector
+PUBLISH=/usr/local/bin/ol1n-status-publish
 DATA_DIR=/var/lib/ol1n-status
-WEB_DIR=$DATA_DIR/web
+SNAPSHOT_DIR=$DATA_DIR/snapshot
 SERVICE=ol1n-status
 
-echo "==> Building status-collector…"
+echo "==> building"
 CGO_ENABLED=1 go build -ldflags="-s -w" -o /tmp/status-collector ./cmd/status-collector
 
-echo "==> Installing binary…"
+echo "==> installing binaries"
 sudo install -m 0755 /tmp/status-collector "$BINARY"
+sudo install -m 0755 deploy/publish-snapshot.sh "$PUBLISH"
 
-echo "==> Creating data directory…"
-sudo mkdir -p "$DATA_DIR" "$WEB_DIR"
+echo "==> data directories"
+sudo mkdir -p "$DATA_DIR" "$SNAPSHOT_DIR"
 sudo chown -R ol1n:ol1n "$DATA_DIR"
 
-echo "==> Deploying web assets…"
-sudo cp web/index.html "$WEB_DIR/index.html"
-sudo chown ol1n:ol1n "$WEB_DIR/index.html"
-
-echo "==> Installing systemd service…"
+echo "==> systemd units"
 sudo cp deploy/ol1n-status.service /etc/systemd/system/
-
-echo "==> Restarting service…"
+sudo cp deploy/ol1n-status-snapshot.service /etc/systemd/system/
+sudo cp deploy/ol1n-status-snapshot.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$SERVICE"
 sudo systemctl restart "$SERVICE"
+sudo systemctl enable --now ol1n-status-snapshot.timer
 
-echo "==> Status:"
-sudo systemctl status "$SERVICE" --no-pager -l
-
-echo ""
-echo "✓ API dostupné na http://127.0.0.1:8765/api/status"
-echo "  Přidej Caddyfile.snippet do /etc/caddy/Caddyfile a reload Caddy."
+echo "==> status"
+sudo systemctl status "$SERVICE" --no-pager -l | head -20
+systemctl list-timers ol1n-status-snapshot.timer --no-pager | head -3

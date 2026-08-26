@@ -1,0 +1,13 @@
+[Unit]
+Description=Publish ol1n-status snapshot to the repo's data branch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ol1n
+Group=ol1n
+ExecStart=/usr/local/bin/ol1n-status-publish
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ol1n-status-snapshot

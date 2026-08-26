@@ -1,18 +1,20 @@
-status.ol1n.com {
-    # Reverse proxy API calls to the Go collector
+# The status page itself is no longer served here — it lives on GitHub Pages so
+# that it stays readable when this NAS is down. Caddy only exposes the API.
+#
+# Add status-api.ol1n.com as a public hostname in the Cloudflare Tunnel
+# (Service: http://127.0.0.1:80) and paste this into /etc/caddy/Caddyfile.
+status-api.ol1n.com {
     handle /api/* {
         reverse_proxy 127.0.0.1:8765
     }
 
-    # Serve the static frontend
+    # Anything else on this hostname is a mistake — send people to the page.
     handle {
-        root * /var/lib/ol1n-status/web
-        file_server
-        try_files {path} /index.html
+        redir https://status.ol1n.com{uri} permanent
     }
 
     log {
-        output file /var/log/caddy/status.ol1n.com.log
+        output file /var/log/caddy/status-api.ol1n.com.log
         format json
     }
 }

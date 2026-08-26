@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -25,6 +26,23 @@ type Endpoint struct {
 	Headers     map[string]string `json:"headers,omitempty"`
 	// ExpectStatus: if 0, any 2xx counts as up.
 	ExpectStatus int `json:"expect_status,omitempty"`
+}
+
+// cfAccessHeaders returns Cloudflare Access service-token headers from the
+// environment. Every *.ol1n.com hostname sits behind a Cloudflare Access
+// application, which rejects unauthenticated requests at the edge with a 403 —
+// the origin is never reached, so without a token every probe reports down
+// however healthy the service is.
+func cfAccessHeaders() map[string]string {
+	id := os.Getenv("CF_ACCESS_CLIENT_ID")
+	secret := os.Getenv("CF_ACCESS_CLIENT_SECRET")
+	if id == "" || secret == "" {
+		return nil
+	}
+	return map[string]string{
+		"CF-Access-Client-Id":     id,
+		"CF-Access-Client-Secret": secret,
+	}
 }
 
 // DefaultEndpoints returns the standard monitored endpoints.
@@ -121,6 +139,16 @@ func DefaultEndpoints(comfyBase string) []Endpoint {
 			Group: "Radarr",
 			URL:   "http://localhost:7878/ping",
 		},
+	}
+
+	// Attach the service token to everything that goes through Cloudflare.
+	// LAN and localhost targets are reached directly and must not get it.
+	if cf := cfAccessHeaders(); cf != nil {
+		for i := range eps {
+			if strings.HasPrefix(eps[i].URL, "https://") && strings.Contains(eps[i].URL, ".ol1n.com") {
+				eps[i].Headers = cf
+			}
+		}
 	}
 
 	// ── ComfyUI ────────────────────────────────────────────────────────
@@ -253,6 +281,9 @@ func (c *Checker) checkEndpoint(ctx context.Context, ep Endpoint) storage.Check 
 // fetchFirstModel calls /v1/models and returns the first model id, or empty string on failure.
 func (c *Checker) fetchFirstModel(ctx context.Context) string {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://llm.ol1n.com/v1/models", nil)
+	for k, v := range cfAccessHeaders() {
+		req.Header.Set(k, v)
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return ""

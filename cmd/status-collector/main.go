@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/ol1n/status-collector/internal/api"
 	"github.com/ol1n/status-collector/internal/checker"
 	"github.com/ol1n/status-collector/internal/comfy"
+	"github.com/ol1n/status-collector/internal/host"
 	"github.com/ol1n/status-collector/internal/storage"
 )
 
@@ -23,7 +25,10 @@ func main() {
 	comfyBase := flag.String("comfy", "", "ComfyUI base URL (e.g. http://192.168.1.50:8188); empty disables ComfyUI monitoring")
 	sampleInterval := flag.Duration("sample-interval", 60*time.Second, "ComfyUI gauge sampling interval (queue depth, VRAM)")
 	drainInterval := flag.Duration("drain-interval", 5*time.Minute, "ComfyUI job history drain interval")
-	snapshotDir := flag.String("snapshot-dir", "", "Directory to write status.json/comfy.json into; empty disables snapshots")
+	nodeExporters := flag.String("node-exporter", "", "Remote hosts to scrape, as name=url[,name=url] (e.g. spark=http://192.168.1.51:9100/metrics)")
+	hostName := flag.String("host-name", "nas", "Name for this machine in host metrics; empty disables local sampling")
+	hostDisks := flag.String("host-disks", "/,/var/lib/ol1n-status", "Comma-separated mount points to report disk usage for")
+	snapshotDir := flag.String("snapshot-dir", "", "Directory to write status.json/comfy.json/hosts.json into; empty disables snapshots")
 	snapshotInterval := flag.Duration("snapshot-interval", 5*time.Minute, "How often to rewrite the snapshot files")
 	flag.Parse()
 
@@ -50,7 +55,31 @@ func main() {
 		logger.Info("comfyui monitoring disabled (no -comfy flag)")
 	}
 
-	srv := api.New(db, logger, endpoints, poller)
+	// Host metrics: this machine straight from /proc, everything else from
+	// node_exporter. Both produce the same metric names.
+	var samplers []host.Sampler
+	if *hostName != "" {
+		local := host.NewLocal(*hostName, "", splitList(*hostDisks))
+		if local.Available() {
+			samplers = append(samplers, local)
+		} else {
+			logger.Info("local host metrics unavailable (no /proc — not Linux?)", "host", *hostName)
+		}
+	}
+	remote, err := host.ParseNodeExporters(*nodeExporters)
+	if err != nil {
+		logger.Error("bad -node-exporter", "err", err)
+		os.Exit(1)
+	}
+	samplers = append(samplers, remote...)
+
+	var hosts *host.Registry
+	if len(samplers) > 0 {
+		hosts = host.NewRegistry(db, logger, samplers...)
+		logger.Info("host metrics enabled", "hosts", hosts.Names())
+	}
+
+	srv := api.New(db, logger, endpoints, poller, hosts)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -62,6 +91,13 @@ func main() {
 		if err := srv.WriteSnapshot(*snapshotDir); err != nil {
 			logger.Warn("snapshot write failed", "dir", *snapshotDir, "err", err)
 		}
+	}
+
+	sampleHosts := func(ctx context.Context) {
+		if hosts == nil {
+			return
+		}
+		hosts.SampleAll(ctx)
 	}
 
 	sampleComfy := func(ctx context.Context) {
@@ -85,6 +121,7 @@ func main() {
 	// Run everything once on startup so the API has data immediately.
 	logger.Info("running initial check")
 	chk.RunOnce(ctx)
+	sampleHosts(ctx)
 	sampleComfy(ctx)
 	drainComfy(ctx)
 	writeSnapshot()
@@ -98,6 +135,9 @@ func main() {
 	if poller != nil {
 		every(ctx, *sampleInterval, func() { sampleComfy(ctx) })
 		every(ctx, *drainInterval, func() { drainComfy(ctx) })
+	}
+	if hosts != nil {
+		every(ctx, *sampleInterval, func() { sampleHosts(ctx) })
 	}
 	if *snapshotDir != "" {
 		every(ctx, *snapshotInterval, writeSnapshot)
@@ -139,4 +179,15 @@ func every(ctx context.Context, d time.Duration, fn func()) {
 			}
 		}
 	}()
+}
+
+// splitList parses a comma-separated flag value, dropping blanks.
+func splitList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

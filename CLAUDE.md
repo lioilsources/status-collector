@@ -17,11 +17,13 @@ NAS (Ubuntu)
   └─ status-collector (Go binary, systemd) — three independent clocks
        ├─ -interval 1h        availability probes   → checks
        ├─ -sample-interval 1m ComfyUI gauges        → metrics
+       ├─ -sample-interval 1m host metrics          → metrics
        ├─ -drain-interval 5m  ComfyUI /history      → comfy_jobs
        ├─ -snapshot-interval 5m  writes status.json + comfy.json
        └─ HTTP API on 127.0.0.1:8765
             ├─ GET /api/status        → availability + hourly buckets
             ├─ GET /api/comfy         → ComfyUI metrics
+            ├─ GET /api/hosts         → CPU/RAM/load/disk per machine
             └─ GET /api/history/{id}  → raw hourly buckets
 
   └─ systemd timer (15m) → deploy/publish-snapshot.sh
@@ -58,6 +60,7 @@ cmd/seed-demo/main.go          # dev-only: fake data + snapshot for frontend wor
 internal/api/api.go            # /api/status, /api/comfy, /api/history, snapshot writer
 internal/checker/checker.go    # HTTP health probes; DefaultEndpoints(comfyBase)
 internal/comfy/comfy.go        # ComfyUI poller: gauges + job history
+internal/host/host.go          # machine metrics: /proc locally, node_exporter remotely
 internal/storage/storage.go    # SQLite: checks, metrics, comfy_jobs
 
 web/index.html                 # single-file frontend, no build step
@@ -81,6 +84,10 @@ deploy/                        # systemd units, Caddy snippet, publish script
   properties and were validated for the dark chart surface — do not add a hue
   without re-checking CVD separation, and keep green/red/amber reserved for
   status.
+- Host metrics use one shape for both sources: the local /proc sampler and the
+  node_exporter scraper emit identical metric names, so nothing downstream has
+  to know which kind of machine it is looking at. `metrics.source` is the host
+  name. CPU is a delta and is suppressed until two readings exist (`cpu_valid`).
 - ComfyUI history reads must stay idempotent: upsert by `prompt_id`, never
   insert. ComfyUI drops its history on restart, so `comfy_jobs` is the record.
 - New tables use `CREATE TABLE IF NOT EXISTS`; there is no migration version

@@ -13,11 +13,14 @@ NAS (Ubuntu)
   └─ status-collector (Go binary, systemd)
        ├─ 1× za hodinu   pinguje endpointy         → SQLite (tabulka checks)
        ├─ 1× za minutu   vzorkuje ComfyUI gauge    → SQLite (tabulka metrics)
+       ├─ 1× za minutu   vzorkuje stroje            → SQLite (tabulka metrics)
+       │                  NAS z /proc, ostatní z node_exporteru
        ├─ 1× za 5 minut  čte ComfyUI /history      → SQLite (tabulka comfy_jobs)
        ├─ 1× za 5 minut  zapisuje snapshot JSON    → /var/lib/ol1n-status/snapshot
        └─ HTTP API na 127.0.0.1:8765
             ├─ GET /api/status        → dostupnost + hodinové buckety
             ├─ GET /api/comfy         → ComfyUI metriky
+            ├─ GET /api/hosts         → CPU/RAM/load/disk per stroj
             └─ GET /api/history/{id}  → raw hodinové buckety
 
   └─ systemd timer (15 min)
@@ -70,6 +73,42 @@ ComfyUI drží historii jen v paměti a při restartu ji ztratí, proto si colle
 joby ukládá do vlastní tabulky. Čtení historie je idempotentní (upsert podle
 `prompt_id`), takže opakované čtení stejného okna nic nezdvojí.
 
+## Metriky strojů
+
+NAS se čte přímo z `/proc` — bez agenta, bez závislostí:
+
+| Metrika | Zdroj |
+|---|---|
+| load1 / load5 / load15 | `/proc/loadavg` |
+| CPU % | delta `/proc/stat`, idle+iowait proti součtu |
+| RAM % | `/proc/meminfo`, `MemAvailable` (ne `MemFree`) |
+| swap % | `/proc/meminfo` |
+| disk % per mount | `statfs`, rezervované bloky se počítají jako obsazené |
+
+Vzdálené stroje (SPARK a cokoliv dalšího) přes **node_exporter**. Metrické názvy
+jsou stejné jako u NASu, takže frontend nerozlišuje lokální a vzdálený stroj.
+
+```bash
+# na SPARKu
+sudo apt install prometheus-node-exporter     # nebo binárka z github.com/prometheus/node_exporter
+sudo systemctl enable --now prometheus-node-exporter
+curl -s localhost:9100/metrics | head -5
+```
+
+Pak na NASu do `/etc/default/ol1n-status`:
+```
+NODE_EXPORTERS="-node-exporter spark=http://192.168.1.51:9100/metrics"
+```
+Dalších strojů může být kolik chceš: `spark=http://…,gpu2=http://…`.
+
+> node_exporter poslouchá defaultně na všech rozhraních. Omez ho na LAN
+> (`--web.listen-address=192.168.1.51:9100`) nebo firewallem — neexportuj ho
+> do internetu.
+
+**CPU je delta**, takže po startu collectoru je první vzorek bez CPU hodnoty
+(v UI `–`, pole `cpu_valid: false`). Druhý vzorek už číslo má. Stejně tak se
+ignoruje pokles čítačů po rebootu, aby nevznikl falešný špičkový údaj.
+
 ## Deploy
 
 ### Pořadí prvního rozjetí
@@ -80,11 +119,29 @@ Každý krok je funkční sám o sobě; stránka se s každým dalším zlepší
 ```bash
 ./deploy/deploy.sh
 ```
-Pro ComfyUI vytvoř `/etc/default/ol1n-status`:
+Vytvoř `/etc/default/ol1n-status`:
 ```
 COMFY_FLAG="-comfy http://192.168.1.50:8188"
+NODE_EXPORTERS="-node-exporter spark=http://192.168.1.51:9100/metrics"
+CF_ACCESS_CLIENT_ID=<id>.access
+CF_ACCESS_CLIENT_SECRET=<secret>
 ```
 a `sudo systemctl restart ol1n-status`. Ověř: `curl -s localhost:8765/api/comfy | jq .now`
+
+> **Service token není volitelný.** `llm.ol1n.com` je za Cloudflare Access
+> (vlastní Access aplikace, AUD `9034f196…`) a odmítá neautentizované
+> požadavky už na edge — 403 přijde dřív, než se dotaz dostane k originu.
+> Bez tokenu hlásí status page down úplně všechno. Token vytvoř v Zero Trust
+> → Access → Service Auth a autorizuj ho pro aplikaci `llm.ol1n.com`.
+> ComfyUI ho nepotřebuje, protože se na něj chodí přímo přes LAN.
+
+Ověření, že token funguje:
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  https://llm.ol1n.com/health      # 200, ne 403
+```
 
 **2. Deploy key pro publikaci snapshotu**
 ```bash
@@ -93,7 +150,7 @@ sudo cat /var/lib/ol1n-status/deploy_key.pub
 ```
 Veřejný klíč vlož do repo Settings → Deploy keys, **Allow write access**.
 Pak `sudo systemctl start ol1n-status-snapshot.service` a zkontroluj, že vznikla
-větev `data` se soubory `status.json` a `comfy.json`.
+větev `data` se soubory `status.json`, `comfy.json` a `hosts.json`.
 
 **3. GitHub Pages**
 Settings → Pages → Source: **GitHub Actions**. Push do `main` → workflow
@@ -125,6 +182,9 @@ certifikát se nevydá. Pak nastav v `.github/workflows/pages.yml`
 | `-comfy`             | *(prázdné)*                      | ComfyUI base URL; prázdné = vypnuto    |
 | `-sample-interval`   | `60s`                            | Vzorkování ComfyUI gauge               |
 | `-drain-interval`    | `5m`                             | Čtení ComfyUI historie                 |
+| `-host-name`         | `nas`                            | Jméno tohoto stroje; prázdné = vypnuto |
+| `-host-disks`        | `/,/var/lib/ol1n-status`         | Mount pointy pro disk usage            |
+| `-node-exporter`     | *(prázdné)*                      | `name=url[,name=url]` vzdálených strojů |
 | `-snapshot-dir`      | *(prázdné)*                      | Kam psát snapshot; prázdné = vypnuto   |
 | `-snapshot-interval` | `5m`                             | Jak často přepisovat snapshot          |
 

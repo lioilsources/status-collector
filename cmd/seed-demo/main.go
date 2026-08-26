@@ -16,6 +16,7 @@ import (
 	"github.com/ol1n/status-collector/internal/api"
 	"github.com/ol1n/status-collector/internal/checker"
 	"github.com/ol1n/status-collector/internal/comfy"
+	"github.com/ol1n/status-collector/internal/host"
 	"github.com/ol1n/status-collector/internal/storage"
 )
 
@@ -145,12 +146,61 @@ func main() {
 		}
 	}
 
+	// ── host metrics for two machines ──
+	for _, h := range []struct {
+		name    string
+		baseCPU float64
+		baseMem float64
+		cores   float64
+		mounts  []string
+	}{
+		{"nas", 12, 38, 8, []string{"/", "/var/lib/ol1n-status"}},
+		{"spark", 30, 55, 20, []string{"/"}},
+	} {
+		for m := 30 * 24 * 6; m >= 0; m-- {
+			ts := now.Add(-time.Duration(m) * 10 * time.Minute)
+			busy := 0.0
+			if ts.Hour() >= 17 && ts.Hour() <= 23 {
+				busy = rnd.Float64() * 55
+			}
+			cpu := h.baseCPU + busy + rnd.Float64()*8
+			if cpu > 100 {
+				cpu = 100
+			}
+			metrics := []storage.Metric{
+				{Name: "cpu_used_pct", Value: cpu},
+				{Name: "mem_used_pct", Value: h.baseMem + busy/4 + rnd.Float64()*6},
+				{Name: "swap_used_pct", Value: rnd.Float64() * 4},
+				{Name: "load1", Value: cpu / 100 * h.cores},
+				{Name: "load5", Value: cpu / 110 * h.cores},
+				{Name: "load15", Value: cpu / 125 * h.cores},
+			}
+			// Disks creep upward across the window rather than jittering.
+			for i, mount := range h.mounts {
+				grow := float64(30*24*6-m) / float64(30*24*6) * 6
+				metrics = append(metrics, storage.Metric{
+					Name: "disk_used_pct", Label: mount,
+					Value: 54 + float64(i)*17 + grow + rnd.Float64(),
+				})
+			}
+			if err := db.InsertMetrics(h.name, ts, metrics); err != nil {
+				panic(err)
+			}
+		}
+	}
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	poller := comfy.New("http://127.0.0.1:18188", db, logger)
 	// Best-effort live sample; the demo works without a ComfyUI running.
 	_ = poller.SampleGauges(context.Background())
 
-	srv := api.New(db, logger, endpoints, poller)
+	hosts := host.NewRegistry(db, logger,
+		host.NewLocal("nas", "", []string{"/"}),
+		host.NewNodeExporter("spark", "http://127.0.0.1:19100/metrics"),
+	)
+	hosts.SampleAll(context.Background())
+
+	srv := api.New(db, logger, endpoints, poller, hosts)
 	if err := srv.WriteSnapshot(*outDir); err != nil {
 		panic(err)
 	}

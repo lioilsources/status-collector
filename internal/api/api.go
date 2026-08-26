@@ -12,6 +12,7 @@ import (
 
 	"github.com/ol1n/status-collector/internal/checker"
 	"github.com/ol1n/status-collector/internal/comfy"
+	"github.com/ol1n/status-collector/internal/host"
 	"github.com/ol1n/status-collector/internal/storage"
 )
 
@@ -22,22 +23,26 @@ type Server struct {
 	db        *storage.DB
 	logger    *slog.Logger
 	endpoints []checker.Endpoint
-	comfy     *comfy.Poller // nil when ComfyUI monitoring is disabled
+	comfy     *comfy.Poller  // nil when ComfyUI monitoring is disabled
+	hosts     *host.Registry // nil when host metrics are disabled
 	mux       *http.ServeMux
 }
 
 // New builds the API. The static frontend is not served here — it lives on
 // GitHub Pages and reaches this API cross-origin.
-func New(db *storage.DB, logger *slog.Logger, endpoints []checker.Endpoint, poller *comfy.Poller) *Server {
+func New(db *storage.DB, logger *slog.Logger, endpoints []checker.Endpoint,
+	poller *comfy.Poller, hosts *host.Registry) *Server {
 	s := &Server{
 		db:        db,
 		logger:    logger,
 		endpoints: endpoints,
 		comfy:     poller,
+		hosts:     hosts,
 		mux:       http.NewServeMux(),
 	}
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/comfy", s.handleComfy)
+	s.mux.HandleFunc("GET /api/hosts", s.handleHosts)
 	s.mux.HandleFunc("GET /api/history/{endpointID}", s.handleHistory)
 	return s
 }
@@ -119,6 +124,20 @@ type ComfyTotals struct {
 	CacheHitRatio float64 `json:"cache_hit_ratio"`
 }
 
+// HostsResponse carries machine-level metrics for every configured host.
+type HostsResponse struct {
+	GeneratedAt time.Time    `json:"generated_at"`
+	Enabled     bool         `json:"enabled"`
+	Hosts       []HostReport `json:"hosts"`
+}
+
+type HostReport struct {
+	Name   string                   `json:"name"`
+	Now    host.Sample              `json:"now"`
+	Series map[string][]MetricPoint `json:"series"`
+	Disks  []LabeledSeries          `json:"disks"`
+}
+
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -127,6 +146,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleComfy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.buildComfy())
+}
+
+func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.buildHosts())
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
@@ -281,10 +304,54 @@ func (s *Server) buildComfy() ComfyResponse {
 	return resp
 }
 
+// hostSeries are the gauges charted for every host. CPU/memory/swap share a
+// percentage axis; the load averages share their own.
+var hostSeries = []string{"cpu_used_pct", "mem_used_pct", "swap_used_pct", "load1", "load5", "load15"}
+
+func (s *Server) buildHosts() HostsResponse {
+	resp := HostsResponse{
+		GeneratedAt: time.Now().UTC(),
+		Enabled:     s.hosts != nil,
+		Hosts:       []HostReport{},
+	}
+	if s.hosts == nil {
+		return resp
+	}
+
+	for _, sample := range s.hosts.Latest() {
+		report := HostReport{
+			Name:   sample.Name,
+			Now:    sample,
+			Series: map[string][]MetricPoint{},
+			Disks:  []LabeledSeries{},
+		}
+		for _, name := range hostSeries {
+			report.Series[name] = s.seriesFrom(sample.Name, name, "")
+		}
+
+		mounts, err := s.db.MetricLabels(sample.Name, "disk_used_pct", days)
+		if err != nil {
+			s.logger.Warn("disk labels", "host", sample.Name, "err", err)
+		}
+		for _, mount := range mounts {
+			report.Disks = append(report.Disks, LabeledSeries{
+				Label:  mount,
+				Points: s.seriesFrom(sample.Name, "disk_used_pct", mount),
+			})
+		}
+		resp.Hosts = append(resp.Hosts, report)
+	}
+	return resp
+}
+
 func (s *Server) series(name, label string) []MetricPoint {
-	buckets, err := s.db.GetMetricBuckets(comfy.Source, name, label, days)
+	return s.seriesFrom(comfy.Source, name, label)
+}
+
+func (s *Server) seriesFrom(source, name, label string) []MetricPoint {
+	buckets, err := s.db.GetMetricBuckets(source, name, label, days)
 	if err != nil {
-		s.logger.Warn("metric buckets", "name", name, "label", label, "err", err)
+		s.logger.Warn("metric buckets", "source", source, "name", name, "label", label, "err", err)
 		return []MetricPoint{}
 	}
 	out := make([]MetricPoint, 0, len(buckets))
@@ -309,7 +376,10 @@ func (s *Server) WriteSnapshot(dir string) error {
 	if err := writeJSONFile(filepath.Join(dir, "status.json"), s.buildStatus()); err != nil {
 		return err
 	}
-	return writeJSONFile(filepath.Join(dir, "comfy.json"), s.buildComfy())
+	if err := writeJSONFile(filepath.Join(dir, "comfy.json"), s.buildComfy()); err != nil {
+		return err
+	}
+	return writeJSONFile(filepath.Join(dir, "hosts.json"), s.buildHosts())
 }
 
 // writeJSONFile writes atomically — the publish script may read the directory

@@ -741,6 +741,11 @@ const CHART_W = 1000;
 const PAD = { l: 52, r: 16, t: 12, b: 22 };
 const LABEL_GUTTER = 104;
 
+function truncate(text, max) {
+  const str = String(text ?? '');
+  return str.length <= max ? str : str.slice(0, max - 1) + '…';
+}
+
 function svgEl(name, attrs) {
   const n = document.createElementNS(SVG_NS, name);
   for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
@@ -882,20 +887,36 @@ function lineChart({ series, yMax, yFormat, xLabels, height = 176, area = false 
   // Direct labels at the last known value (<= 4 series), nudged apart so two
   // converging lines do not stack their labels on top of each other.
   if (direct) {
-    const placed = [];
-    series.forEach((s, i) => {
-      const last = [...s.points].reverse().find(p => p.y !== null && p.y !== undefined);
-      if (!last) return;
-      let y = Math.max(PAD.t + 8, py(last.y));
-      while (placed.some(p => Math.abs(p - y) < 14)) y += 14;
-      placed.push(y);
+    // Stack the labels top-to-bottom in the order the lines actually end, keep
+    // them at least a line apart, then shift the whole stack up if it would
+    // run past the bottom of the plot into the x-axis.
+    const GAP = 17;
+    const items = series
+      .map((s, i) => {
+        const last = [...s.points].reverse().find(p => p.y !== null && p.y !== undefined);
+        return last ? { label: s.label, colour: s.color || SERIES[i % SERIES.length], at: py(last.y) } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.at - b.at);
+
+    let cursor = PAD.t + 8;
+    for (const it of items) {
+      it.y = Math.max(cursor, it.at);
+      cursor = it.y + GAP;
+    }
+    const overflow = items.length ? items[items.length - 1].y - (PAD.t + ph) : 0;
+    if (overflow > 0) for (const it of items) it.y -= overflow;
+
+    for (const it of items) {
       const t = svgEl('text', {
-        class: 'series-label', x: CHART_W - padR + 8, y: y + 4,
-        'text-anchor': 'start', fill: s.color || SERIES[i % SERIES.length],
+        class: 'series-label', x: CHART_W - padR + 8, y: it.y + 4,
+        'text-anchor': 'start', fill: it.colour,
       });
-      t.textContent = s.label;
+      // The gutter is fixed, so a long label (a mount path, say) is trimmed
+      // here; the legend underneath always carries the full text.
+      t.textContent = truncate(it.label, 15);
       svg.appendChild(t);
-    });
+    }
   }
 
   // Hover layer: one crosshair snapped to the nearest sample, all series read
@@ -1158,7 +1179,7 @@ function renderStatus(data, main) {
   }
 }
 
-// ── Render: ComfyUI ───────────────────────────────────────────────────────
+// ── Render: machines ──────────────────────────────────────────────────────
 function kpi(label, value, sub, hot) {
   return `
     <div class="kpi${hot ? ' hot' : ''}">
@@ -1168,6 +1189,86 @@ function kpi(label, value, sub, hot) {
     </div>`;
 }
 
+function pointsOf(series) {
+  return alignHourly(series || [], b => b.avg);
+}
+
+// anyAbove keeps a flat-zero series (swap on a box that never swaps) out of the
+// chart instead of drawing a line along the axis.
+function anyAbove(points, threshold) {
+  return points.some(p => p.y !== null && p.y > threshold);
+}
+
+function renderHosts(hosts, main) {
+  if (!hosts || !hosts.enabled || !(hosts.hosts || []).length) return;
+
+  const gh = document.createElement('div');
+  gh.className = 'group-header';
+  gh.innerHTML = '<h2>Stroje</h2>';
+  main.appendChild(gh);
+
+  for (const h of hosts.hosts) {
+    const now = h.now || {};
+    const series = h.series || {};
+
+    // KPI row — the current reading, with the 30-day charts underneath.
+    const tiles = document.createElement('div');
+    tiles.className = 'kpis';
+    const cpuValue = now.reachable && now.cpu_valid ? `${now.cpu_used_pct}%` : '–';
+    const cpuSub = now.reachable
+      ? (now.cpus ? `${now.cpus} jader` : 'čeká na druhý vzorek')
+      : esc(now.error || 'nedostupné');
+
+    const parts = [
+      kpi(`${h.name} · CPU`, cpuValue, cpuSub, (now.cpu_used_pct || 0) >= 90),
+      kpi('RAM', now.reachable ? `${now.mem_used_pct}%` : '–',
+          now.mem_total_bytes ? fmtBytes(now.mem_total_bytes) : '', (now.mem_used_pct || 0) >= 90),
+      kpi('load 1m', now.reachable ? String(now.load1) : '–',
+          now.reachable ? `5m ${now.load5} · 15m ${now.load15}` : '',
+          now.cpus > 0 && now.load1 > now.cpus),
+    ];
+    for (const d of (now.disks || []).slice(0, 3)) {
+      parts.push(kpi(`disk ${d.mount}`, `${d.used_pct}%`, fmtBytes(d.total_bytes), d.used_pct >= 90));
+    }
+    tiles.innerHTML = parts.join('');
+    main.appendChild(tiles);
+
+    // Utilisation: CPU, RAM and swap share a percentage axis.
+    const util = [
+      { label: 'CPU', points: pointsOf(series.cpu_used_pct) },
+      { label: 'RAM', points: pointsOf(series.mem_used_pct) },
+    ];
+    const swap = pointsOf(series.swap_used_pct);
+    if (anyAbove(swap, 1)) util.push({ label: 'swap', points: swap });
+
+    chartCard(main, `${h.name} · vytížení`,
+      now.reachable && now.cpu_valid ? `CPU teď ${now.cpu_used_pct}%` : '',
+      util, { yMax: 100, yFormat: v => `${Math.round(v)} %` });
+
+    // Load average is a different unit, so it gets its own axis.
+    chartCard(main, `${h.name} · load average`,
+      now.reachable ? `teď ${now.load1}` : '',
+      [
+        { label: '1m', points: pointsOf(series.load1) },
+        { label: '5m', points: pointsOf(series.load5) },
+        { label: '15m', points: pointsOf(series.load15) },
+      ],
+      { yFormat: v => v.toFixed(1) });
+
+    // Disks creep rather than fluctuate; a 30-day line is what shows a volume
+    // slowly filling up, which a single percentage never would.
+    const disks = (h.disks || []).map(d => ({
+      label: d.label,
+      points: alignHourly(d.points, b => b.avg),
+    }));
+    if (disks.length) {
+      chartCard(main, `${h.name} · zaplnění disku`, '', disks,
+        { yMax: 100, yFormat: v => `${Math.round(v)} %` });
+    }
+  }
+}
+
+// ── Render: ComfyUI ───────────────────────────────────────────────────────
 function renderComfy(comfy, main) {
   if (!comfy || !comfy.enabled) return;
 
@@ -1339,21 +1440,23 @@ async function loadData() {
     try {
       // /api/comfy is newer than /api/status — a collector without it must not
       // knock the whole page over.
-      const [status, comfy] = await Promise.all([
+      const [status, comfy, hosts] = await Promise.all([
         getJSON(`${API_BASE}/api/status`),
         getJSON(`${API_BASE}/api/comfy`).catch(() => null),
+        getJSON(`${API_BASE}/api/hosts`).catch(() => null),
       ]);
-      return { status, comfy, source: 'live' };
+      return { status, comfy, hosts, source: 'live' };
     } catch (err) {
       liveErr = err;
     }
   }
   if (SNAPSHOT_BASE) {
-    const [status, comfy] = await Promise.all([
+    const [status, comfy, hosts] = await Promise.all([
       getJSON(`${SNAPSHOT_BASE}/status.json`),
       getJSON(`${SNAPSHOT_BASE}/comfy.json`).catch(() => null),
+      getJSON(`${SNAPSHOT_BASE}/hosts.json`).catch(() => null),
     ]);
-    return { status, comfy, source: 'snapshot' };
+    return { status, comfy, hosts, source: 'snapshot' };
   }
   throw liveErr || new Error('Není nakonfigurovaný žádný zdroj dat');
 }
@@ -1364,10 +1467,11 @@ let lastPayload = null;
 
 function draw() {
   if (!lastPayload) return;
-  const { status, comfy, source } = lastPayload;
+  const { status, comfy, hosts, source } = lastPayload;
   const main = document.getElementById('main');
   main.innerHTML = '';
   renderStatus(status, main);
+  renderHosts(hosts, main);
   renderComfy(comfy, main);
   renderFreshness(status.generated_at, source);
 }

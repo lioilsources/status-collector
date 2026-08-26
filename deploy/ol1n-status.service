@@ -11,6 +11,15 @@ Group=ol1n
 # Optional overrides; the leading '-' makes the file optional.
 #   /etc/default/ol1n-status
 #   COMFY_FLAG="-comfy http://192.168.1.50:8188"
+#   NODE_EXPORTERS="-node-exporter spark=http://192.168.1.51:9100/metrics"
+#   CF_ACCESS_CLIENT_ID=<id>.access
+#   CF_ACCESS_CLIENT_SECRET=<secret>
+#
+# The service token is REQUIRED for the llm.ol1n.com probes: that hostname sits
+# behind a Cloudflare Access application which rejects unauthenticated requests
+# at the edge with a 403, so without it every probe reports down no matter how
+# healthy vLLM is. Authorize the token for the llm.ol1n.com Access app.
+#
 # Unbraced $COMFY_FLAG is split on whitespace by systemd, so it expands to two
 # arguments — or to nothing at all when the file or the variable is absent.
 EnvironmentFile=-/etc/default/ol1n-status
@@ -21,7 +30,7 @@ ExecStart=/usr/local/bin/status-collector \
     -interval 1h \
     -sample-interval 60s \
     -snapshot-dir /var/lib/ol1n-status/snapshot \
-    $COMFY_FLAG
+    $COMFY_FLAG $NODE_EXPORTERS
 
 Restart=on-failure
 RestartSec=10s

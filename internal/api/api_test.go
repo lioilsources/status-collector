@@ -29,7 +29,7 @@ func newTestServer(t *testing.T) (*Server, *storage.DB) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// nil poller — ComfyUI monitoring disabled
-	return New(db, logger, eps, nil), db
+	return New(db, logger, eps, nil, nil), db
 }
 
 func TestStatusEndpoint(t *testing.T) {
@@ -139,7 +139,7 @@ func TestWriteSnapshot(t *testing.T) {
 		t.Fatalf("WriteSnapshot: %v", err)
 	}
 
-	for _, name := range []string{"status.json", "comfy.json"} {
+	for _, name := range []string{"status.json", "comfy.json", "hosts.json"} {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -158,8 +158,8 @@ func TestWriteSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
-		t.Errorf("snapshot dir has %d entries; want exactly status.json and comfy.json", len(entries))
+	if len(entries) != 3 {
+		t.Errorf("snapshot dir has %d entries; want status.json, comfy.json and hosts.json", len(entries))
 	}
 
 	// Rewriting must overwrite in place, not fail on an existing file.

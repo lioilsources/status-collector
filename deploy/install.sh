@@ -58,5 +58,17 @@ sudo systemctl restart "$SERVICE"
 sudo systemctl enable --now ol1n-status-snapshot.timer
 
 echo "==> status"
-"$BINARY" -h 2>&1 | head -1 || true
 sudo systemctl status "$SERVICE" --no-pager -l | head -12
+
+cat <<'NEXT'
+
+Next:
+  1. sudo tee /etc/default/ol1n-status   (CF_ACCESS_*, COMFY_FLAG, NODE_EXPORTERS)
+     then: sudo systemctl restart ol1n-status
+  2. sudo -u ol1n ssh-keygen -t ed25519 -N '' -f /var/lib/ol1n-status/deploy_key
+     add the .pub to repo Settings -> Deploy keys, WITH write access
+     then: sudo systemctl start ol1n-status-snapshot.service
+
+Until step 1 the llm.ol1n.com probes report down: that host sits behind
+Cloudflare Access and 403s unauthenticated requests at the edge.
+NEXT

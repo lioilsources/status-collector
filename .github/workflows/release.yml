@@ -1,0 +1,105 @@
+# Builds the collector for the NAS so it does not need a Go toolchain, a C
+# compiler, or a checkout of this repo.
+#
+# Binaries are linked statically (netgo + -extldflags -static): the runner ships
+# a newer glibc than most NAS installs, and a dynamically linked binary would
+# die with a GLIBC_2.xx version error on the target.
+#
+#   push a tag v*  → publishes a GitHub Release with both architectures
+#   workflow_dispatch → builds and uploads artifacts only, publishing nothing
+name: Release binaries
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            cc: gcc
+            apt: ''
+          - arch: arm64
+            cc: aarch64-linux-gnu-gcc
+            apt: gcc-aarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install cross compiler
+        if: matrix.apt != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ${{ matrix.apt }}
+
+      - name: Build
+        env:
+          CGO_ENABLED: '1'
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CC: ${{ matrix.cc }}
+        run: |
+          set -euo pipefail
+          go build \
+            -tags 'netgo osusergo sqlite_omit_load_extension' \
+            -ldflags '-s -w -linkmode external -extldflags "-static"' \
+            -o status-collector ./cmd/status-collector
+          file status-collector
+          # A dynamic binary here would only fail later, on the NAS.
+          if file status-collector | grep -q "dynamically linked"; then
+            echo "::error::binary is dynamically linked; it will not run on an older glibc"
+            exit 1
+          fi
+
+      - name: Stage tarball
+        run: |
+          set -euo pipefail
+          stage=status-collector_linux_${{ matrix.arch }}
+          mkdir -p "$stage/systemd"
+          mv status-collector "$stage/"
+          cp deploy/install.sh deploy/publish-snapshot.sh "$stage/"
+          cp deploy/ol1n-status.service \
+             deploy/ol1n-status-snapshot.service \
+             deploy/ol1n-status-snapshot.timer "$stage/systemd/"
+          chmod +x "$stage/install.sh" "$stage/publish-snapshot.sh"
+          tar czf "$stage.tar.gz" "$stage"
+          sha256sum "$stage.tar.gz" > "$stage.tar.gz.sha256"
+          tar tzf "$stage.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: status-collector_linux_${{ matrix.arch }}
+          path: status-collector_linux_${{ matrix.arch }}.tar.gz*
+          retention-days: 7
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ls -la dist
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*

@@ -29,7 +29,7 @@ NAS (Ubuntu)
   └─ systemd timer (15m) → deploy/publish-snapshot.sh
        force-pushes the snapshot to the repo's orphan `data` branch
 
-Caddy (NAS) → status-api.ol1n.com → :8765, via Cloudflare Tunnel
+Cloudflare Tunnel (NAS) → status-api.ol1n.com → 127.0.0.1:8765
 GitHub Actions → GitHub Pages → status.ol1n.com
 
 Frontend tries the live API first, falls back to
@@ -71,7 +71,7 @@ internal/storage/storage.go    # SQLite: checks, metrics, comfy_jobs
 web/index.html                 # single-file frontend, no build step
 web/CNAME                      # written by the workflow, only when DNS is ready
 
-deploy/                        # systemd units, Caddy snippet, publish script
+deploy/                        # systemd units, Cloudflare notes, publish script
 ```
 
 ## Conventions

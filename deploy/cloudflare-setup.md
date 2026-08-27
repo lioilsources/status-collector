@@ -5,11 +5,13 @@ Po přesunu frontendu na GitHub Pages má `ol1n.com` dva různé záznamy:
 | Hostname              | Kam                | Typ záznamu                              |
 |-----------------------|--------------------|------------------------------------------|
 | `status.ol1n.com`     | GitHub Pages       | `CNAME → lioilsources.github.io`, **DNS only** |
-| `status-api.ol1n.com` | NAS Caddy → :8765  | vytvoří Cloudflare Tunnel automaticky    |
+| `status-api.ol1n.com` | NAS kolektor :8765 | vytvoří Cloudflare Tunnel automaticky    |
 
 ## 1. API hostname v tunelu
 
-Předpoklad: `cloudflared` tunnel na NASu už běží.
+Předpoklad: `cloudflared` tunnel na NASu už běží. Tunel míří na kolektor přímo —
+žádná reverzní proxy mezi tím není, kolektor obsluhuje jen `/api/*` a všechno
+ostatní vrací 404.
 
 **Zero Trust Dashboard:** https://one.dash.cloudflare.com → **Networks → Tunnels**
 → existující tunnel → **Configure → Public Hostnames → Add a public hostname**
@@ -17,16 +19,34 @@ Předpoklad: `cloudflared` tunnel na NASu už běží.
 - Subdomain: `status-api`
 - Domain: `ol1n.com`
 - Type: `HTTP`
-- URL: `http://127.0.0.1:80` (Caddy)
+- URL: `http://localhost:8765`
 
-**Nebo přes CLI:**
-```bash
-cloudflared tunnel route dns <TUNNEL_NAME> status-api.ol1n.com
-```
-a do `config.yml` mezi `ingress:`:
+**Lokálně spravovaný tunel** (tenhle případ — `~/.cloudflared/config.yml`) se
+z dashboardu editovat nedá, ingress žije v souboru. Přidej pravidlo **před**
+catch-all `http_status:404`, pořadí rozhoduje:
+
 ```yaml
   - hostname: status-api.ol1n.com
-    service: http://127.0.0.1:80
+    service: http://localhost:8765
+    originRequest:
+      connectTimeout: 10s
+
+  - service: http_status:404
+```
+
+```bash
+cloudflared tunnel --config ~/.cloudflared/config.yml ingress validate
+cloudflared tunnel --config ~/.cloudflared/config.yml ingress rule \
+  https://status-api.ol1n.com/api/status      # musí sednout na to nové pravidlo
+cloudflared tunnel route dns <TUNNEL_NAME> status-api.ol1n.com
+```
+
+Pozor na `--config` **před** `ingress`; za ním ho cloudflared nebere.
+
+Restart podle toho, jak tunel běží — tady je to uživatelská služba, ne systémová:
+
+```bash
+systemctl --user restart cloudflared-media    # NAS `joda`
 ```
 
 Ověření:

@@ -26,7 +26,7 @@ NAS (Ubuntu)
   └─ systemd timer (15 min)
        └─ publish-snapshot.sh → force-push do větve `data`
 
-Caddy (NAS) → status-api.ol1n.com  → 127.0.0.1:8765     (přes Cloudflare Tunnel)
+Cloudflare Tunnel (NAS) → status-api.ol1n.com → 127.0.0.1:8765
 GitHub Pages → status.ol1n.com     → web/index.html
 
 Frontend čte živé API; když je nedostupné, spadne na
@@ -222,9 +222,17 @@ Stránka v tuhle chvíli jede ze snapshotu.
 > `gh-pages` tiše „uspěje" a web zůstane starý.
 
 **4. Živé API (volitelné, ale doporučené)**
-Přidej v Cloudflare Tunnelu public hostname `status-api.ol1n.com` →
-`http://127.0.0.1:80` a vlož `deploy/Caddyfile.snippet` do `/etc/caddy/Caddyfile`.
-Ověř `curl -i https://status-api.ol1n.com/api/status | head`.
+Tunel míří na kolektor přímo, žádná reverzní proxy mezi tím není:
+```bash
+# do ingress: v ~/.cloudflared/config.yml, PŘED catch-all http_status:404
+#   - hostname: status-api.ol1n.com
+#     service: http://localhost:8765
+cloudflared tunnel --config ~/.cloudflared/config.yml ingress validate
+cloudflared tunnel route dns <TUNNEL_NAME> status-api.ol1n.com
+systemctl --user restart cloudflared-<jméno>   # nebo sudo systemctl restart cloudflared
+```
+Ověř `curl -i https://status-api.ol1n.com/api/status | head`: musí přijít `200`
+a `access-control-allow-origin: *`. Mimo `/api/*` vrací kolektor 404.
 
 **5. Vlastní doména (až úplně nakonec)**
 V Cloudflare DNS přidej `CNAME status → lioilsources.github.io` jako

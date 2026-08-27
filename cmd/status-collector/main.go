@@ -61,6 +61,12 @@ func main() {
 	if *hostName != "" {
 		local := host.NewLocal(*hostName, "", splitList(*hostDisks))
 		if local.Available() {
+			// A mistyped or not-yet-mounted path would just never show up on
+			// the page; say so once instead.
+			if missing := local.MissingDisks(); len(missing) > 0 {
+				logger.Warn("configured disk paths are unreadable and will not be reported",
+					"paths", missing, "flag", "-host-disks")
+			}
 			samplers = append(samplers, local)
 		} else {
 			logger.Info("local host metrics unavailable (no /proc — not Linux?)", "host", *hostName)

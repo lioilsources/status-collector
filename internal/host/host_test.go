@@ -143,10 +143,12 @@ node_memory_MemTotal_bytes 1.34217728e+11
 node_memory_MemAvailable_bytes 3.3554432e+10
 node_memory_SwapTotal_bytes 8.589934592e+09
 node_memory_SwapFree_bytes 8.589934592e+09
-node_filesystem_size_bytes{device="/dev/nvme0n1",fstype="ext4",mountpoint="/"} 1000
-node_filesystem_avail_bytes{device="/dev/nvme0n1",fstype="ext4",mountpoint="/"} 250
-node_filesystem_size_bytes{device="tmpfs",fstype="tmpfs",mountpoint="/run"} 500
-node_filesystem_avail_bytes{device="tmpfs",fstype="tmpfs",mountpoint="/run"} 100
+node_filesystem_size_bytes{device="/dev/nvme0n1",fstype="ext4",mountpoint="/"} 4e12
+node_filesystem_avail_bytes{device="/dev/nvme0n1",fstype="ext4",mountpoint="/"} 1e12
+node_filesystem_size_bytes{device="/dev/nvme0n1p1",fstype="vfat",mountpoint="/boot/efi"} 5.36870912e+08
+node_filesystem_avail_bytes{device="/dev/nvme0n1p1",fstype="vfat",mountpoint="/boot/efi"} 5.2e+08
+node_filesystem_size_bytes{device="tmpfs",fstype="tmpfs",mountpoint="/run"} 6.7e+10
+node_filesystem_avail_bytes{device="tmpfs",fstype="tmpfs",mountpoint="/run"} 6.6e+10
 node_scrape_collector_success{collector="cpu"} 1
 `
 
@@ -184,7 +186,8 @@ func TestNodeExporterSample(t *testing.T) {
 	if s.SwapUsedPct != 0 {
 		t.Errorf("swap = %v; want 0 (nothing swapped)", s.SwapUsedPct)
 	}
-	// tmpfs must be filtered out; only the real ext4 root survives.
+	// tmpfs is a pseudo-filesystem and /boot/efi is a 512 MB firmware
+	// partition; only the real root is worth a line on the page.
 	if len(s.Disks) != 1 {
 		t.Fatalf("disks = %+v; want only the ext4 root", s.Disks)
 	}
@@ -306,5 +309,49 @@ func TestParseNodeExporters(t *testing.T) {
 		if _, err := ParseNodeExporters(bad); err == nil {
 			t.Errorf("%q should have been rejected", bad)
 		}
+	}
+}
+
+func TestLocalReportsEachFilesystemOnce(t *testing.T) {
+	dir := t.TempDir()
+	writeProc(t, dir, "cpu  200 0 100 1600 20 0 0 0 0 0")
+	sub := filepath.Join(dir, "nested")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both paths live on the same filesystem — exactly the shape of
+	// "/" plus "/var/lib/ol1n-status" on a box with one volume.
+	l := NewLocal("nas", dir, []string{dir, sub})
+	s, err := l.Sample(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Disks) != 1 {
+		t.Errorf("disks = %+v; want one entry, not the same volume twice", s.Disks)
+	}
+	if len(s.Disks) == 1 && s.Disks[0].Mount != dir {
+		t.Errorf("mount = %q; want the first path that named the volume (%q)", s.Disks[0].Mount, dir)
+	}
+}
+
+func TestMissingDisksAreReported(t *testing.T) {
+	dir := t.TempDir()
+	writeProc(t, dir, "cpu  200 0 100 1600 20 0 0 0 0 0")
+	ghost := filepath.Join(dir, "not-mounted")
+
+	l := NewLocal("nas", dir, []string{dir, ghost})
+	missing := l.MissingDisks()
+	if len(missing) != 1 || missing[0] != ghost {
+		t.Errorf("MissingDisks() = %v; want [%s]", missing, ghost)
+	}
+
+	// It must not break the sample, just be absent from it.
+	s, err := l.Sample(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Disks) != 1 {
+		t.Errorf("disks = %+v; want only the readable path", s.Disks)
 	}
 }

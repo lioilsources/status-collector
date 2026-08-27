@@ -12,6 +12,7 @@ Group=ol1n
 #   /etc/default/ol1n-status
 #   COMFY_FLAG="-comfy http://192.168.1.50:8188"
 #   NODE_EXPORTERS="-node-exporter spark=http://192.168.1.51:9100/metrics"
+#   HOST_DISKS="-host-disks /,/media,/pool"
 #   CF_ACCESS_CLIENT_ID=<id>.access
 #   CF_ACCESS_CLIENT_SECRET=<secret>
 #
@@ -30,7 +31,7 @@ ExecStart=/usr/local/bin/status-collector \
     -interval 1h \
     -sample-interval 60s \
     -snapshot-dir /var/lib/ol1n-status/snapshot \
-    $COMFY_FLAG $NODE_EXPORTERS
+    $COMFY_FLAG $NODE_EXPORTERS $HOST_DISKS
 
 Restart=on-failure
 RestartSec=10s

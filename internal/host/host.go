@@ -123,6 +123,19 @@ func NewLocal(name, procRoot string, diskPaths []string) *Local {
 
 func (l *Local) Name() string { return l.name }
 
+// MissingDisks lists configured paths that cannot be stat'd. A mistyped or
+// unmounted path would otherwise simply never appear, with nothing said about
+// why — the caller logs these once at startup.
+func (l *Local) MissingDisks() []string {
+	var missing []string
+	for _, p := range l.diskPaths {
+		if _, _, err := diskUsage(p); err != nil {
+			missing = append(missing, p)
+		}
+	}
+	return missing
+}
+
 // Available reports whether this machine exposes /proc at all. macOS does not,
 // so `make build` on a laptop still works — the sampler just stays off.
 func (l *Local) Available() bool {
@@ -161,10 +174,18 @@ func (l *Local) Sample(ctx context.Context) (Sample, error) {
 		return s, err
 	}
 
+	seenDevice := map[uint64]bool{}
 	for _, p := range l.diskPaths {
 		used, total, err := diskUsage(p)
 		if err != nil || total == 0 {
 			continue
+		}
+		// Report each filesystem once, under the first path that named it.
+		if dev, err := deviceOf(p); err == nil {
+			if seenDevice[dev] {
+				continue
+			}
+			seenDevice[dev] = true
 		}
 		s.Disks = append(s.Disks, Disk{
 			Mount:      p,
@@ -266,6 +287,11 @@ func (l *Local) readMem(s *Sample) error {
 }
 
 // ── Remote (node_exporter) ──────────────────────────────────────────────────
+
+// minFilesystemBytes drops boot and firmware partitions. A 512 MB /boot/efi at
+// 2% tells nobody anything while taking a line on the chart from the volumes
+// that matter.
+const minFilesystemBytes = 1 << 30 // 1 GiB
 
 // skipFilesystems are pseudo-filesystems whose "usage" means nothing.
 var skipFilesystems = map[string]bool{
@@ -377,7 +403,7 @@ func (n *NodeExporter) fill(s *Sample, fam map[string][]promSample) {
 	for _, sample := range fam["node_filesystem_avail_bytes"] {
 		mp := sample.labels["mountpoint"]
 		size := sizes[mp]
-		if size <= 0 || skipFilesystems[fstypes[mp]] {
+		if size < minFilesystemBytes || skipFilesystems[fstypes[mp]] {
 			continue
 		}
 		s.Disks = append(s.Disks, Disk{

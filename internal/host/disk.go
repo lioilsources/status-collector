@@ -16,3 +16,14 @@ func diskUsage(path string) (used, total uint64, err error) {
 	used = (st.Blocks - st.Bavail) * bs
 	return used, total, nil
 }
+
+// deviceOf returns the id of the device holding path. Two configured paths on
+// the same filesystem describe one volume, and reporting both produces two
+// identical rows — /var/lib/ol1n-status sitting on / being the obvious case.
+func deviceOf(path string) (uint64, error) {
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		return 0, err
+	}
+	return uint64(st.Dev), nil
+}

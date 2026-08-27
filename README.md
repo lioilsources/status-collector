@@ -93,6 +93,21 @@ NAS se čte přímo z `/proc` — bez agenta, bez závislostí:
 | swap % | `/proc/meminfo` |
 | disk % per mount | `statfs`, rezervované bloky se počítají jako obsazené |
 
+Které svazky se hlásí, řídí `HOST_DISKS` v `/etc/default/ol1n-status`:
+
+```
+HOST_DISKS="-host-disks /,/media,/pool"
+```
+
+Dva mount pointy na **stejném** filesystému se hlásí jednou, pod tou cestou,
+která ho pojmenovala první — jinak by `/` a `/var/lib/ol1n-status` na jednom
+disku vyrobily dva identické řádky. Cesta, která neexistuje nebo není
+namontovaná, se při startu vypíše do logu jako varování, aby překlep nezmizel
+potichu.
+
+U vzdálených strojů se filesystémy pod 1 GiB ignorují — `/boot/efi` na 2 %
+nikomu nic neřekne a bere řádek svazkům, na kterých záleží.
+
 Vzdálené stroje (SPARK a cokoliv dalšího) přes **node_exporter**. Metrické názvy
 jsou stejné jako u NASu, takže frontend nerozlišuje lokální a vzdálený stroj.
 
@@ -229,7 +244,7 @@ certifikát se nevydá. Pak nastav v `.github/workflows/pages.yml`
 | `-sample-interval`   | `60s`                            | Vzorkování ComfyUI gauge               |
 | `-drain-interval`    | `5m`                             | Čtení ComfyUI historie                 |
 | `-host-name`         | `nas`                            | Jméno tohoto stroje; prázdné = vypnuto |
-| `-host-disks`        | `/,/var/lib/ol1n-status`         | Mount pointy pro disk usage            |
+| `-host-disks`        | `/,/var/lib/ol1n-status`         | Mount pointy pro disk usage; přes `HOST_DISKS` |
 | `-node-exporter`     | *(prázdné)*                      | `name=url[,name=url]` vzdálených strojů |
 | `-snapshot-dir`      | *(prázdné)*                      | Kam psát snapshot; prázdné = vypnuto   |
 | `-snapshot-interval` | `5m`                             | Jak často přepisovat snapshot          |

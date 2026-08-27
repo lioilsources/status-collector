@@ -74,3 +74,37 @@ func TestComfyEndpointsFollowTheFlag(t *testing.T) {
 		}
 	}
 }
+
+// TestKnownDeadEndpointsStayRemoved guards the list against being restored
+// from stale docs. Each of these was probed against the live host and can
+// never return 2xx, so a probe for it would sit red forever.
+func TestKnownDeadEndpointsStayRemoved(t *testing.T) {
+	dead := map[string]string{
+		"ping":              "404 — the host serves /health, not /ping",
+		"vllm_version":      "404 — vLLM-native route, not exposed here",
+		"vllm_metrics":      "404 — vLLM-native route, not exposed here",
+		"vllm_tokenize":     "404 — vLLM-native route, not exposed here",
+		"openai_embeddings": "500 — routed, but the served model has no embedding head",
+	}
+	for _, ep := range DefaultEndpoints("http://192.168.1.50:8188") {
+		if why, bad := dead[ep.ID]; bad {
+			t.Errorf("endpoint %q is back; it can never go green (%s). "+
+				"If the gateway now serves it, check GET /openapi.json for the real path.",
+				ep.ID, why)
+		}
+	}
+}
+
+func TestEveryEndpointHasTheFieldsTheFrontendNeeds(t *testing.T) {
+	seen := map[string]bool{}
+	for _, ep := range DefaultEndpoints("http://192.168.1.50:8188") {
+		if ep.ID == "" || ep.Name == "" || ep.Group == "" || ep.URL == "" {
+			t.Errorf("incomplete endpoint: %+v", ep)
+		}
+		if seen[ep.ID] {
+			// Duplicate IDs would collide in the metrics keyed by endpoint_id.
+			t.Errorf("duplicate endpoint ID %q", ep.ID)
+		}
+		seen[ep.ID] = true
+	}
+}

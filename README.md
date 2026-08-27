@@ -38,20 +38,28 @@ raw.githubusercontent.com/<repo>/data/status.json a ukáže poslední známý st
 | ID                  | Skupina    | URL                       |
 |---------------------|------------|---------------------------|
 | health              | Health     | /health                   |
-| ping                | Health     | /ping                     |
 | openai_models       | OpenAI API | /v1/models                |
 | openai_chat         | OpenAI API | POST /v1/chat/completions |
 | openai_completions  | OpenAI API | POST /v1/completions      |
-| openai_embeddings   | OpenAI API | POST /v1/embeddings       |
-| vllm_version        | vLLM       | /version                  |
-| vllm_metrics        | vLLM       | /metrics                  |
-| vllm_tokenize       | vLLM       | /tokenize                 |
 | sonarr_ping         | Sonarr     | localhost:8989/ping       |
-| radarr_ping         | Radarr     | localhost:7878/ping        |
+| radarr_ping         | Radarr     | localhost:7878/ping       |
 | comfyui_stats       | ComfyUI    | $COMFY/system_stats       |
 | comfyui_queue       | ComfyUI    | $COMFY/queue              |
 
 ComfyUI endpointy vzniknou jen když je nastavený flag `-comfy`.
+
+**Co se nemonitoruje a proč.** Tyhle cesty `llm.ol1n.com` nenabízí — proměřeno
+proti živému hostu 26. 8. 2026. Probe, který nemůže nikdy zezelenat, je horší
+než žádný: naučí člověka stránku ignorovat.
+
+| cesta | výsledek | proč |
+|---|---|---|
+| `/ping` | 404 | host servíruje `/health`, ne `/ping` |
+| `/version`, `/metrics`, `/tokenize` | 404 | vLLM-nativní routy; tenhle host vystavuje jen OpenAI-kompatibilní povrch |
+| `POST /v1/embeddings` | 500 | routa existuje, ale nasazený model nemá embedding hlavu |
+
+Kdyby je gateway začala vystavovat, přidej je zpátky s cestou, kterou opravdu
+servíruje — seznam rout dá `GET /openapi.json`, ne hádání.
 
 ## ComfyUI metriky
 

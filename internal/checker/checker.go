@@ -45,6 +45,20 @@ func cfAccessHeaders() map[string]string {
 	}
 }
 
+// Endpoints deliberately NOT probed, measured against the live host on
+// 2026-08-26. A probe that can never go green is worse than no probe: it
+// trains people to ignore the page.
+//
+//	/ping                 404 — llm.ol1n.com serves /health, not /ping
+//	/version              404 \
+//	/metrics              404  |  vLLM-native routes; this host only exposes
+//	/tokenize             404 /   the OpenAI-compatible surface
+//	POST /v1/embeddings   500 — routed, but the served model has no embedding
+//	                            head, so it fails on every call
+//
+// If the gateway ever exposes them, re-add with the path it actually serves —
+// check GET /openapi.json for the route list rather than guessing.
+//
 // DefaultEndpoints returns the standard monitored endpoints.
 // comfyBase is the ComfyUI base URL (e.g. http://192.168.1.50:8188); when empty,
 // the ComfyUI endpoints are omitted entirely.
@@ -57,12 +71,6 @@ func DefaultEndpoints(comfyBase string) []Endpoint {
 			Name:  "vLLM Health",
 			Group: "Health",
 			URL:   base + "/health",
-		},
-		{
-			ID:    "ping",
-			Name:  "API Ping",
-			Group: "Health",
-			URL:   base + "/ping",
 		},
 		// ── OpenAI-compatible ──────────────────────────────────────────────
 		{
@@ -94,36 +102,6 @@ func DefaultEndpoints(comfyBase string) []Endpoint {
 			ContentType:  "application/json",
 			Body:         `{"model":"__auto__","max_tokens":1,"prompt":"ping"}`,
 			ExpectStatus: 200,
-		},
-		{
-			ID:          "openai_embeddings",
-			Name:        "POST /v1/embeddings",
-			Group:       "OpenAI API",
-			URL:         base + "/v1/embeddings",
-			Method:      "POST",
-			ContentType: "application/json",
-			Body:        `{"model":"__auto__","input":"ping"}`,
-			// Embeddings may not be served — 422/404 still means the API layer is alive
-			ExpectStatus: 0,
-		},
-		// ── vLLM-specific ──────────────────────────────────────────────────
-		{
-			ID:    "vllm_version",
-			Name:  "GET /version",
-			Group: "vLLM",
-			URL:   base + "/version",
-		},
-		{
-			ID:    "vllm_metrics",
-			Name:  "GET /metrics",
-			Group: "vLLM",
-			URL:   base + "/metrics",
-		},
-		{
-			ID:    "vllm_tokenize",
-			Name:  "GET /tokenize",
-			Group: "vLLM",
-			URL:   base + "/tokenize?text=ping",
 		},
 		// ── Sonarr ─────────────────────────────────────────────────────────
 		{

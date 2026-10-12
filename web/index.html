@@ -1244,6 +1244,9 @@ function renderHosts(hosts, main) {
       parts.push(kpi('teplota', `${lead.celsius} °C`,
         rest || TEMP_LABELS[lead.sensor] || lead.sensor, lead.celsius >= TEMP_WARN_C));
     }
+    if (now.reachable && now.gpu_power_w) {
+      parts.push(kpi('příkon GPU', `${now.gpu_power_w} W`, ''));
+    }
     tiles.innerHTML = parts.join('');
     main.appendChild(tiles);
 
@@ -1279,6 +1282,14 @@ function renderHosts(hosts, main) {
       chartCard(main, `${h.name} · teplota (hodinové maximum)`,
         zone && now.reachable ? `teď ${zone.celsius} °C` : '',
         temps, { yFormat: v => `${Math.round(v)} °C` });
+    }
+
+    // Only machines with a GPU report its power; the rest get no card at all.
+    const power = [{ label: 'GPU', points: pointsOf(series.gpu_power_w) }];
+    if (hasData(power)) {
+      chartCard(main, `${h.name} · příkon GPU`,
+        now.reachable && now.gpu_power_w ? `teď ${now.gpu_power_w} W` : '',
+        power, { yFormat: v => `${Math.round(v)} W` });
     }
 
     // Disks creep rather than fluctuate; a 30-day line is what shows a volume

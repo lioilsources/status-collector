@@ -441,9 +441,12 @@ func TestLocalTemps(t *testing.T) {
 
 func TestNodeExporterGPUTemp(t *testing.T) {
 	gpu := `node_gpu_temp_celsius{gpu="0"} 67
+node_gpu_power_watts{gpu="0"} 41.59
+node_gpu_power_watts{gpu="1"} 20
 node_textfile_mtime_seconds{file="/var/lib/prometheus/node-exporter/gpu.prom"} 1000
 node_textfile_mtime_seconds{file="/var/lib/prometheus/node-exporter/apt.prom"} 5
 `
+	var powerW float64
 	gpuOf := func(now string) (float64, bool) {
 		body := nodeExporterFixture + gpu + "node_time_seconds " + now + "\n"
 		srv := serveFixture(t, &body)
@@ -451,6 +454,7 @@ node_textfile_mtime_seconds{file="/var/lib/prometheus/node-exporter/apt.prom"} 5
 		if err != nil {
 			t.Fatal(err)
 		}
+		powerW = s.GPUPowerW
 		for _, temp := range s.Temps {
 			if temp.Sensor == TempGPU {
 				return temp.Celsius, true
@@ -462,8 +466,15 @@ node_textfile_mtime_seconds{file="/var/lib/prometheus/node-exporter/apt.prom"} 5
 	if v, ok := gpuOf("1030"); !ok || v != 67 {
 		t.Errorf("fresh textfile: gpu = %v, %v; want 67", v, ok)
 	}
+	// Power is summed across GPUs — the question is what the machine draws.
+	if powerW != 61.6 {
+		t.Errorf("fresh textfile: power = %v; want 61.6", powerW)
+	}
 	// The writer died an hour ago; its last value is not the temperature now.
 	if v, ok := gpuOf("4600"); ok {
 		t.Errorf("stale textfile still reported gpu = %v", v)
+	}
+	if powerW != 0 {
+		t.Errorf("stale textfile still reported power = %v", powerW)
 	}
 }

@@ -187,6 +187,12 @@ func main() {
 				storage.Metric{Name: "temp_c", Label: host.TempZone, Value: 48 + busy/2 + rnd.Float64()*5},
 				storage.Metric{Name: "temp_c", Label: host.TempNVMe, Value: 40 + busy/6 + rnd.Float64()*3},
 			)
+			if h.name == "spark" {
+				metrics = append(metrics,
+					storage.Metric{Name: "temp_c", Label: host.TempGPU, Value: 44 + busy/2 + rnd.Float64()*4},
+					storage.Metric{Name: "gpu_power_w", Value: 12 + busy*1.6 + rnd.Float64()*6},
+				)
+			}
 			if err := db.InsertMetrics(h.name, ts, metrics); err != nil {
 				panic(err)
 			}

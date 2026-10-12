@@ -69,6 +69,8 @@ type Sample struct {
 	SwapUsedPct   float64 `json:"swap_used_pct"`
 	Disks         []Disk  `json:"disks"`
 	Temps         []Temp  `json:"temps,omitempty"`
+	// GPUPowerW is the draw of all GPUs together; 0 means the host reports none.
+	GPUPowerW float64 `json:"gpu_power_w,omitempty"`
 }
 
 // Metrics flattens a sample into rows for the metrics table.
@@ -93,6 +95,9 @@ func (s Sample) Metrics() []storage.Metric {
 	}
 	for _, t := range s.Temps {
 		ms = append(ms, storage.Metric{Name: "temp_c", Label: t.Sensor, Value: t.Celsius})
+	}
+	if s.GPUPowerW > 0 {
+		ms = append(ms, storage.Metric{Name: "gpu_power_w", Value: s.GPUPowerW})
 	}
 	return ms
 }
@@ -538,31 +543,37 @@ func (n *NodeExporter) fill(s *Sample, fam map[string][]promSample) {
 	if len(zones) == 0 {
 		zones = board
 	}
-	s.Temps = hottest(zones, gpuTemps(fam), nvme)
+	gpu, powerW := gpuTextfile(fam)
+	s.Temps = hottest(zones, gpu, nvme)
+	s.GPUPowerW = round1(powerW)
 }
 
 // gpuTextfileMaxAge is how old gpu.prom may be before its reading is dropped.
 const gpuTextfileMaxAge = 5 * time.Minute
 
-// gpuTemps reads the GPU temperature deploy/spark/gpu-textfile.sh publishes
-// through the textfile collector. A textfile keeps being served long after
-// whatever wrote it has died, so the reading is only trusted while the file is
-// fresh by the exporter's own clock.
-func gpuTemps(fam map[string][]promSample) []float64 {
+// gpuTextfile reads what deploy/spark/gpu-textfile.sh publishes through the
+// textfile collector: a temperature per GPU and the power drawn by all of them.
+// A textfile keeps being served long after whatever wrote it has died, so the
+// readings are only trusted while the file is fresh by the exporter's own clock.
+func gpuTextfile(fam map[string][]promSample) (temps []float64, powerW float64) {
 	now := first(fam["node_time_seconds"])
 	for _, sample := range fam["node_textfile_mtime_seconds"] {
 		if !strings.HasSuffix(sample.labels["file"], "/gpu.prom") {
 			continue
 		}
 		if now > 0 && now-sample.value > gpuTextfileMaxAge.Seconds() {
-			return nil
+			return nil, 0
 		}
 	}
-	var out []float64
 	for _, sample := range fam["node_gpu_temp_celsius"] {
-		out = append(out, sample.value)
+		temps = append(temps, sample.value)
 	}
-	return out
+	for _, sample := range fam["node_gpu_power_watts"] {
+		if sample.value > 0 {
+			powerW += sample.value
+		}
+	}
+	return temps, powerW
 }
 
 // ── Prometheus text parsing ─────────────────────────────────────────────────

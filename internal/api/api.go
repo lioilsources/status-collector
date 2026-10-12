@@ -306,8 +306,9 @@ func (s *Server) buildComfy() ComfyResponse {
 }
 
 // hostSeries are the gauges charted for every host. CPU/memory/swap share a
-// percentage axis; the load averages share their own.
-var hostSeries = []string{"cpu_used_pct", "mem_used_pct", "swap_used_pct", "load1", "load5", "load15"}
+// percentage axis; the load averages share their own, and so does GPU power,
+// which stays empty on a machine that reports none.
+var hostSeries = []string{"cpu_used_pct", "mem_used_pct", "swap_used_pct", "load1", "load5", "load15", "gpu_power_w"}
 
 func (s *Server) buildHosts() HostsResponse {
 	resp := HostsResponse{

@@ -103,8 +103,9 @@ deploy/spark/                  # GPU temperature textfile for SPARK's node_expor
 - Temperature is `temp_c` with the sensor kind as label: `zone` (hottest
   thermal zone), `gpu` and `nvme` (hottest composite). Raw sensors are reduced
   to one line per kind on purpose. node_exporter knows nothing about GPUs, so
-  `gpu` comes from `deploy/spark/`, which writes `node_gpu_temp_celsius` for
-  the textfile collector; a `gpu.prom` older than 5 minutes is ignored.
+  `gpu` comes from `deploy/spark/`, which writes `node_gpu_temp_celsius` and
+  `node_gpu_power_watts` (stored as `gpu_power_w`, summed over GPUs) for the
+  textfile collector; a `gpu.prom` older than 5 minutes is ignored.
 - ComfyUI history reads must stay idempotent: upsert by `prompt_id`, never
   insert. ComfyUI drops its history on restart, so `comfy_jobs` is the record.
 - New tables use `CREATE TABLE IF NOT EXISTS`; there is no migration version

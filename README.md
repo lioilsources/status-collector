@@ -20,7 +20,7 @@ NAS (Ubuntu)
        └─ HTTP API na 127.0.0.1:8765
             ├─ GET /api/status        → dostupnost + hodinové buckety
             ├─ GET /api/comfy         → ComfyUI metriky
-            ├─ GET /api/hosts         → CPU/RAM/load/disk per stroj
+            ├─ GET /api/hosts         → CPU/RAM/load/disk/teplota per stroj
             └─ GET /api/history/{id}  → raw hodinové buckety
 
   └─ systemd timer (15 min)

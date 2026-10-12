@@ -1,4 +1,5 @@
-// Package host samples machine-level metrics — load, CPU, memory, swap, disk.
+// Package host samples machine-level metrics — load, CPU, memory, swap, disk,
+// temperature.
 //
 // Two sources, one shape: the machine the collector runs on is read straight
 // from /proc, and any other machine is scraped from node_exporter. Both emit
@@ -14,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +31,23 @@ type Disk struct {
 	UsedPct    float64 `json:"used_pct"`
 	TotalBytes int64   `json:"total_bytes"`
 }
+
+// Temp is one temperature worth reporting.
+type Temp struct {
+	Sensor  string  `json:"sensor"`
+	Celsius float64 `json:"celsius"`
+}
+
+// TempSensors are the temperature series a host can report, in display order.
+// A machine exposes anywhere from two to a few dozen raw sensors; charting them
+// all would bury the one number that matters, so each kind is reduced to its
+// hottest reading.
+var TempSensors = []string{TempZone, TempNVMe}
+
+const (
+	TempZone = "zone" // hottest thermal zone (SoC / board)
+	TempNVMe = "nvme" // hottest NVMe composite sensor
+)
 
 // Sample is one reading of a machine.
 type Sample struct {
@@ -48,6 +67,7 @@ type Sample struct {
 	MemTotalBytes int64   `json:"mem_total_bytes"`
 	SwapUsedPct   float64 `json:"swap_used_pct"`
 	Disks         []Disk  `json:"disks"`
+	Temps         []Temp  `json:"temps,omitempty"`
 }
 
 // Metrics flattens a sample into rows for the metrics table.
@@ -69,6 +89,9 @@ func (s Sample) Metrics() []storage.Metric {
 	}
 	for _, d := range s.Disks {
 		ms = append(ms, storage.Metric{Name: "disk_used_pct", Label: d.Mount, Value: d.UsedPct})
+	}
+	for _, t := range s.Temps {
+		ms = append(ms, storage.Metric{Name: "temp_c", Label: t.Sensor, Value: t.Celsius})
 	}
 	return ms
 }
@@ -102,12 +125,38 @@ func (c *cpuCounter) update(idle, total float64) (float64, bool) {
 	return round1(clampPct((dTotal - dIdle) / dTotal * 100)), true
 }
 
+// hottest reduces raw sensor readings to the Temps a sample carries. Sensors
+// that are absent or unpopulated report 0, -273.15 or 65261.85 depending on the
+// driver, so anything outside a physically plausible range is ignored.
+func hottest(zones, nvme []float64) []Temp {
+	var out []Temp
+	for _, kind := range []struct {
+		sensor   string
+		readings []float64
+	}{{TempZone, zones}, {TempNVMe, nvme}} {
+		max, ok := 0.0, false
+		for _, v := range kind.readings {
+			if v <= 0 || v >= 150 {
+				continue
+			}
+			if !ok || v > max {
+				max, ok = v, true
+			}
+		}
+		if ok {
+			out = append(out, Temp{Sensor: kind.sensor, Celsius: round1(max)})
+		}
+	}
+	return out
+}
+
 // ── Local (/proc) ───────────────────────────────────────────────────────────
 
 // Local reads the machine the collector runs on.
 type Local struct {
 	name      string
 	procRoot  string
+	sysRoot   string
 	diskPaths []string
 
 	mu  sync.Mutex
@@ -118,7 +167,7 @@ func NewLocal(name, procRoot string, diskPaths []string) *Local {
 	if procRoot == "" {
 		procRoot = "/proc"
 	}
-	return &Local{name: name, procRoot: procRoot, diskPaths: diskPaths}
+	return &Local{name: name, procRoot: procRoot, sysRoot: "/sys", diskPaths: diskPaths}
 }
 
 func (l *Local) Name() string { return l.name }
@@ -194,8 +243,61 @@ func (l *Local) Sample(ctx context.Context) (Sample, error) {
 		})
 	}
 
+	s.Temps = l.readTemps()
+
 	s.Reachable = true
 	return s, nil
+}
+
+// readTemps reads /sys/class/thermal and /sys/class/hwmon. Neither is
+// guaranteed to exist — a VM has no sensors at all — so a miss is simply no
+// temperatures, never an error.
+func (l *Local) readTemps() []Temp {
+	var zones, board, nvme []float64
+
+	paths, _ := filepath.Glob(l.sysRoot + "/class/thermal/thermal_zone*/temp")
+	for _, p := range paths {
+		if v, ok := readMilli(p); ok {
+			zones = append(zones, v)
+		}
+	}
+
+	chips, _ := filepath.Glob(l.sysRoot + "/class/hwmon/hwmon*")
+	for _, chip := range chips {
+		raw, _ := os.ReadFile(chip + "/name")
+		if strings.TrimSpace(string(raw)) == "nvme" {
+			// temp1 is the drive's composite reading; the rest are per-sensor.
+			if v, ok := readMilli(chip + "/temp1_input"); ok {
+				nvme = append(nvme, v)
+			}
+			continue
+		}
+		inputs, _ := filepath.Glob(chip + "/temp*_input")
+		for _, p := range inputs {
+			if v, ok := readMilli(p); ok {
+				board = append(board, v)
+			}
+		}
+	}
+
+	// x86 boxes often have no thermal zones, only coretemp under hwmon.
+	if len(zones) == 0 {
+		zones = board
+	}
+	return hottest(zones, nvme)
+}
+
+// readMilli reads a sysfs temperature, which is in millidegrees Celsius.
+func readMilli(path string) (float64, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
+	if err != nil {
+		return 0, false
+	}
+	return v / 1000, true
 }
 
 // readCPU returns cumulative idle and total jiffies from the aggregate "cpu"
@@ -413,6 +515,29 @@ func (n *NodeExporter) fill(s *Sample, fam map[string][]promSample) {
 		})
 	}
 	sort.Slice(s.Disks, func(i, j int) bool { return s.Disks[i].Mount < s.Disks[j].Mount })
+
+	var zones, board, nvme []float64
+	for _, sample := range fam["node_thermal_zone_temp"] {
+		zones = append(zones, sample.value)
+	}
+	for _, sample := range fam["node_hwmon_temp_celsius"] {
+		chip := sample.labels["chip"]
+		switch {
+		case strings.HasPrefix(chip, "nvme_"):
+			// temp1 is the drive's composite reading; the rest are per-sensor.
+			if sample.labels["sensor"] == "temp1" {
+				nvme = append(nvme, sample.value)
+			}
+		case strings.HasPrefix(chip, "thermal_"):
+			// The thermal zones again, mirrored into hwmon.
+		default:
+			board = append(board, sample.value)
+		}
+	}
+	if len(zones) == 0 {
+		zones = board
+	}
+	s.Temps = hottest(zones, nvme)
 }
 
 // ── Prometheus text parsing ─────────────────────────────────────────────────

@@ -23,7 +23,7 @@ NAS (Ubuntu)
        └─ HTTP API on 127.0.0.1:8765
             ├─ GET /api/status        → availability + hourly buckets
             ├─ GET /api/comfy         → ComfyUI metrics
-            ├─ GET /api/hosts         → CPU/RAM/load/disk per machine
+            ├─ GET /api/hosts         → CPU/RAM/load/disk/temperature per machine
             └─ GET /api/history/{id}  → raw hourly buckets
 
   └─ systemd timer (15m) → deploy/publish-snapshot.sh
@@ -99,6 +99,10 @@ deploy/                        # systemd units, Cloudflare notes, publish script
   node_exporter scraper emit identical metric names, so nothing downstream has
   to know which kind of machine it is looking at. `metrics.source` is the host
   name. CPU is a delta and is suppressed until two readings exist (`cpu_valid`).
+- Temperature is `temp_c` with the sensor kind as label: `zone` (hottest
+  thermal zone) and `nvme` (hottest composite). Raw sensors are reduced to
+  those two on purpose. GPU temperature is not in node_exporter; on SPARK it
+  only exists in `~/ops/thermal.csv`, written by `thermal-logger.service`.
 - ComfyUI history reads must stay idempotent: upsert by `prompt_id`, never
   insert. ComfyUI drops its history on restart, so `comfy_jobs` is the record.
 - New tables use `CREATE TABLE IF NOT EXISTS`; there is no migration version

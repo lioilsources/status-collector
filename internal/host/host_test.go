@@ -355,3 +355,86 @@ func TestMissingDisksAreReported(t *testing.T) {
 		t.Errorf("disks = %+v; want only the readable path", s.Disks)
 	}
 }
+
+func TestNodeExporterTemps(t *testing.T) {
+	body := nodeExporterFixture + `node_thermal_zone_temp{type="acpitz",zone="0"} 69.6
+node_thermal_zone_temp{type="acpitz",zone="1"} 71.84
+node_hwmon_temp_celsius{chip="thermal_thermal_zone0",sensor="temp0"} 99
+node_hwmon_temp_celsius{chip="nvme_nvme0",sensor="temp1"} 52.85
+node_hwmon_temp_celsius{chip="nvme_nvme0",sensor="temp2"} 56.85
+node_hwmon_temp_max_celsius{chip="nvme_nvme0",sensor="temp2"} 65261.85
+`
+	srv := serveFixture(t, &body)
+	s, err := NewNodeExporter("spark", srv.URL+"/metrics").Sample(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The hottest zone, and the drive's composite sensor rather than its
+	// hotter per-sensor reading.
+	want := []Temp{{TempZone, 71.8}, {TempNVMe, 52.9}}
+	if len(s.Temps) != 2 || s.Temps[0] != want[0] || s.Temps[1] != want[1] {
+		t.Errorf("temps = %+v; want %+v", s.Temps, want)
+	}
+
+	found := 0
+	for _, m := range s.Metrics() {
+		if m.Name == "temp_c" {
+			found++
+		}
+	}
+	if found != 2 {
+		t.Errorf("temp_c metrics = %d; want 2", found)
+	}
+}
+
+func TestNodeExporterTempsFallBackToHwmon(t *testing.T) {
+	body := nodeExporterFixture + `node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"} 45
+node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp2"} 0
+`
+	srv := serveFixture(t, &body)
+	s, err := NewNodeExporter("nas", srv.URL+"/metrics").Sample(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Temps) != 1 || s.Temps[0] != (Temp{TempZone, 45}) {
+		t.Errorf("temps = %+v; want the coretemp reading as the zone", s.Temps)
+	}
+}
+
+func TestLocalTemps(t *testing.T) {
+	dir := t.TempDir()
+	writeProc(t, dir, "cpu  200 0 100 1600 20 0 0 0 0 0")
+	sys := t.TempDir()
+	for path, body := range map[string]string{
+		"class/thermal/thermal_zone0/temp": "61500\n",
+		"class/thermal/thermal_zone1/temp": "64200\n",
+		"class/hwmon/hwmon0/name":          "nvme\n",
+		"class/hwmon/hwmon0/temp1_input":   "38850\n",
+		"class/hwmon/hwmon0/temp2_input":   "47850\n",
+	} {
+		full := filepath.Join(sys, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	l := NewLocal("nas", dir, nil)
+	l.sysRoot = sys
+	s, err := l.Sample(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Temp{{TempZone, 64.2}, {TempNVMe, 38.9}}
+	if len(s.Temps) != 2 || s.Temps[0] != want[0] || s.Temps[1] != want[1] {
+		t.Errorf("temps = %+v; want %+v", s.Temps, want)
+	}
+
+	// A machine with no sensors still samples; it just reports no temperatures.
+	l.sysRoot = filepath.Join(sys, "nope")
+	if s, err := l.Sample(context.Background()); err != nil || len(s.Temps) != 0 {
+		t.Errorf("no sensors: temps = %+v, err = %v; want none and no error", s.Temps, err)
+	}
+}

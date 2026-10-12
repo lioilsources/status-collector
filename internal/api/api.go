@@ -136,6 +136,7 @@ type HostReport struct {
 	Now    host.Sample              `json:"now"`
 	Series map[string][]MetricPoint `json:"series"`
 	Disks  []LabeledSeries          `json:"disks"`
+	Temps  []LabeledSeries          `json:"temps"`
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
@@ -324,6 +325,7 @@ func (s *Server) buildHosts() HostsResponse {
 			Now:    sample,
 			Series: map[string][]MetricPoint{},
 			Disks:  []LabeledSeries{},
+			Temps:  []LabeledSeries{},
 		}
 		for _, name := range hostSeries {
 			report.Series[name] = s.seriesFrom(sample.Name, name, "")
@@ -338,6 +340,14 @@ func (s *Server) buildHosts() HostsResponse {
 				Label:  mount,
 				Points: s.seriesFrom(sample.Name, "disk_used_pct", mount),
 			})
+		}
+		// Not every machine has sensors; one without them gets no chart rather
+		// than an empty one.
+		for _, sensor := range host.TempSensors {
+			points := s.seriesFrom(sample.Name, "temp_c", sensor)
+			if len(points) > 0 {
+				report.Temps = append(report.Temps, LabeledSeries{Label: sensor, Points: points})
+			}
 		}
 		resp.Hosts = append(resp.Hosts, report)
 	}

@@ -1199,6 +1199,11 @@ function anyAbove(points, threshold) {
   return points.some(p => p.y !== null && p.y > threshold);
 }
 
+// Thresholds the batch jobs on SPARK already act on: they resume below 87 °C
+// and pause at 93 °C, both measured on the hottest zone.
+const TEMP_WARN_C = 87;
+const TEMP_LABELS = { zone: 'SoC / deska', nvme: 'NVMe' };
+
 function renderHosts(hosts, main) {
   if (!hosts || !hosts.enabled || !(hosts.hosts || []).length) return;
 
@@ -1230,6 +1235,15 @@ function renderHosts(hosts, main) {
     for (const d of (now.disks || []).slice(0, 3)) {
       parts.push(kpi(`disk ${d.mount}`, `${d.used_pct}%`, fmtBytes(d.total_bytes), d.used_pct >= 90));
     }
+    const nowTemps = now.temps || [];
+    const zone = nowTemps.find(t => t.sensor === 'zone');
+    if (now.reachable && nowTemps.length) {
+      const lead = zone || nowTemps[0];
+      const rest = nowTemps.filter(t => t !== lead)
+        .map(t => `${TEMP_LABELS[t.sensor] || t.sensor} ${t.celsius} °C`).join(' · ');
+      parts.push(kpi('teplota', `${lead.celsius} °C`,
+        rest || TEMP_LABELS[lead.sensor] || lead.sensor, lead.celsius >= TEMP_WARN_C));
+    }
     tiles.innerHTML = parts.join('');
     main.appendChild(tiles);
 
@@ -1254,6 +1268,18 @@ function renderHosts(hosts, main) {
         { label: '15m', points: pointsOf(series.load15) },
       ],
       { yFormat: v => v.toFixed(1) });
+
+    // Temperature is charted by its hourly peak: throttling is decided by
+    // spikes, and an hourly mean would smooth exactly those away.
+    const temps = (h.temps || []).map(t => ({
+      label: TEMP_LABELS[t.label] || t.label,
+      points: alignHourly(t.points, b => b.max),
+    }));
+    if (temps.length) {
+      chartCard(main, `${h.name} · teplota (hodinové maximum)`,
+        zone && now.reachable ? `teď ${zone.celsius} °C` : '',
+        temps, { yFormat: v => `${Math.round(v)} °C` });
+    }
 
     // Disks creep rather than fluctuate; a 30-day line is what shows a volume
     // slowly filling up, which a single percentage never would.

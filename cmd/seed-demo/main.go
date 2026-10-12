@@ -183,6 +183,10 @@ func main() {
 					Value: 54 + float64(i)*17 + grow + rnd.Float64(),
 				})
 			}
+			metrics = append(metrics,
+				storage.Metric{Name: "temp_c", Label: host.TempZone, Value: 48 + busy/2 + rnd.Float64()*5},
+				storage.Metric{Name: "temp_c", Label: host.TempNVMe, Value: 40 + busy/6 + rnd.Float64()*3},
+			)
 			if err := db.InsertMetrics(h.name, ts, metrics); err != nil {
 				panic(err)
 			}

@@ -42,10 +42,11 @@ type Temp struct {
 // A machine exposes anywhere from two to a few dozen raw sensors; charting them
 // all would bury the one number that matters, so each kind is reduced to its
 // hottest reading.
-var TempSensors = []string{TempZone, TempNVMe}
+var TempSensors = []string{TempZone, TempGPU, TempNVMe}
 
 const (
 	TempZone = "zone" // hottest thermal zone (SoC / board)
+	TempGPU  = "gpu"  // hottest GPU; remote hosts only, see deploy/spark
 	TempNVMe = "nvme" // hottest NVMe composite sensor
 )
 
@@ -128,12 +129,12 @@ func (c *cpuCounter) update(idle, total float64) (float64, bool) {
 // hottest reduces raw sensor readings to the Temps a sample carries. Sensors
 // that are absent or unpopulated report 0, -273.15 or 65261.85 depending on the
 // driver, so anything outside a physically plausible range is ignored.
-func hottest(zones, nvme []float64) []Temp {
+func hottest(zones, gpu, nvme []float64) []Temp {
 	var out []Temp
 	for _, kind := range []struct {
 		sensor   string
 		readings []float64
-	}{{TempZone, zones}, {TempNVMe, nvme}} {
+	}{{TempZone, zones}, {TempGPU, gpu}, {TempNVMe, nvme}} {
 		max, ok := 0.0, false
 		for _, v := range kind.readings {
 			if v <= 0 || v >= 150 {
@@ -284,7 +285,7 @@ func (l *Local) readTemps() []Temp {
 	if len(zones) == 0 {
 		zones = board
 	}
-	return hottest(zones, nvme)
+	return hottest(zones, nil, nvme)
 }
 
 // readMilli reads a sysfs temperature, which is in millidegrees Celsius.
@@ -537,7 +538,31 @@ func (n *NodeExporter) fill(s *Sample, fam map[string][]promSample) {
 	if len(zones) == 0 {
 		zones = board
 	}
-	s.Temps = hottest(zones, nvme)
+	s.Temps = hottest(zones, gpuTemps(fam), nvme)
+}
+
+// gpuTextfileMaxAge is how old gpu.prom may be before its reading is dropped.
+const gpuTextfileMaxAge = 5 * time.Minute
+
+// gpuTemps reads the GPU temperature deploy/spark/gpu-textfile.sh publishes
+// through the textfile collector. A textfile keeps being served long after
+// whatever wrote it has died, so the reading is only trusted while the file is
+// fresh by the exporter's own clock.
+func gpuTemps(fam map[string][]promSample) []float64 {
+	now := first(fam["node_time_seconds"])
+	for _, sample := range fam["node_textfile_mtime_seconds"] {
+		if !strings.HasSuffix(sample.labels["file"], "/gpu.prom") {
+			continue
+		}
+		if now > 0 && now-sample.value > gpuTextfileMaxAge.Seconds() {
+			return nil
+		}
+	}
+	var out []float64
+	for _, sample := range fam["node_gpu_temp_celsius"] {
+		out = append(out, sample.value)
+	}
+	return out
 }
 
 // ── Prometheus text parsing ─────────────────────────────────────────────────

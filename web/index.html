@@ -1202,7 +1202,7 @@ function anyAbove(points, threshold) {
 // Thresholds the batch jobs on SPARK already act on: they resume below 87 °C
 // and pause at 93 °C, both measured on the hottest zone.
 const TEMP_WARN_C = 87;
-const TEMP_LABELS = { zone: 'SoC / deska', nvme: 'NVMe' };
+const TEMP_LABELS = { zone: 'SoC / deska', gpu: 'GPU', nvme: 'NVMe' };
 
 function renderHosts(hosts, main) {
   if (!hosts || !hosts.enabled || !(hosts.hosts || []).length) return;

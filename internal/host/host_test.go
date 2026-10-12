@@ -438,3 +438,32 @@ func TestLocalTemps(t *testing.T) {
 		t.Errorf("no sensors: temps = %+v, err = %v; want none and no error", s.Temps, err)
 	}
 }
+
+func TestNodeExporterGPUTemp(t *testing.T) {
+	gpu := `node_gpu_temp_celsius{gpu="0"} 67
+node_textfile_mtime_seconds{file="/var/lib/prometheus/node-exporter/gpu.prom"} 1000
+node_textfile_mtime_seconds{file="/var/lib/prometheus/node-exporter/apt.prom"} 5
+`
+	gpuOf := func(now string) (float64, bool) {
+		body := nodeExporterFixture + gpu + "node_time_seconds " + now + "\n"
+		srv := serveFixture(t, &body)
+		s, err := NewNodeExporter("spark", srv.URL+"/metrics").Sample(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, temp := range s.Temps {
+			if temp.Sensor == TempGPU {
+				return temp.Celsius, true
+			}
+		}
+		return 0, false
+	}
+
+	if v, ok := gpuOf("1030"); !ok || v != 67 {
+		t.Errorf("fresh textfile: gpu = %v, %v; want 67", v, ok)
+	}
+	// The writer died an hour ago; its last value is not the temperature now.
+	if v, ok := gpuOf("4600"); ok {
+		t.Errorf("stale textfile still reported gpu = %v", v)
+	}
+}

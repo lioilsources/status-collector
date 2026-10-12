@@ -1,0 +1,8 @@
+[Unit]
+Description=Publish GPU temperature for node_exporter's textfile collector
+
+[Service]
+Type=oneshot
+# Root, like the distro's own apt.prom / nvme.prom writers: the textfile
+# directory is not writable by anyone else.
+ExecStart=/usr/local/bin/ol1n-gpu-textfile

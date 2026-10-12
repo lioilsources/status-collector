@@ -124,6 +124,24 @@ NODE_EXPORTERS="-node-exporter spark=http://192.168.1.51:9100/metrics"
 ```
 Dalších strojů může být kolik chceš: `spark=http://…,gpu2=http://…`.
 
+Teploty (nejteplejší zóna, NVMe) bere collector z node_exporteru bez další
+konfigurace. **Teplotu GPU** node_exporter nezná — na stroji s NVIDIA GPU ji
+doplní textfile collector:
+
+```bash
+# na SPARKu, z checkoutu repa
+sudo install -m 755 deploy/spark/gpu-textfile.sh /usr/local/bin/ol1n-gpu-textfile
+sudo install -m 644 deploy/spark/ol1n-gpu-textfile.service deploy/spark/ol1n-gpu-textfile.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ol1n-gpu-textfile.timer
+curl -s localhost:9100/metrics | grep node_gpu_temp
+```
+
+Skript zapisuje do `/var/lib/prometheus/node-exporter/gpu.prom` (adresář, který
+Debian/Ubuntu balíček čte defaultně; jinde nastav `TEXTFILE_DIR`). Když timer
+přestane běžet, collector hodnotu starší než 5 minut zahodí, místo aby dál
+kreslil poslední známou teplotu.
+
 > node_exporter poslouchá defaultně na všech rozhraních. Omez ho na LAN
 > (`--web.listen-address=192.168.1.51:9100`) nebo firewallem — neexportuj ho
 > do internetu.

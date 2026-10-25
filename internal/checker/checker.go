@@ -103,6 +103,21 @@ func DefaultEndpoints(comfyBase string) []Endpoint {
 			Body:         `{"model":"__auto__","max_tokens":1,"prompt":"ping"}`,
 			ExpectStatus: 200,
 		},
+		// ── FineTune Gallery ───────────────────────────────────────────────
+		// Runs on the NAS beside the collector, but probed through the tunnel:
+		// on 2026-10-25 the NAS froze and only the public hostname showed it.
+		{
+			ID:    "finetune_web",
+			Name:  "finetune.ol1n.com",
+			Group: "FineTune Gallery",
+			URL:   "https://finetune.ol1n.com/",
+		},
+		{
+			ID:    "finetune_api",
+			Name:  "GET /api/meta",
+			Group: "FineTune Gallery",
+			URL:   "https://finetune.ol1n.com/api/meta",
+		},
 		// ── Sonarr ─────────────────────────────────────────────────────────
 		{
 			ID:    "sonarr_ping",

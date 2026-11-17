@@ -1,112 +1,49 @@
-# StatusPage — CLAUDE.md
+# status-collector
 
-## Overview
+## Účel
+Status page pro `llm.ol1n.com`. Go binárka `status-collector` běží na NASu, každou
+hodinu probuje endpointy, každou minutu sbírá metriky ComfyUI a strojů, ukládá je
+do SQLite a vystavuje JSON API. Statický frontend je na **GitHub Pages**, záměrně
+mimo NAS: status page na stroji, který hlídá, je nedostupná právě když je potřeba.
 
-Status page for `llm.ol1n.com`. A Go binary (`status-collector`) runs on the NAS,
-probes endpoints hourly, samples ComfyUI metrics every minute, stores everything
-in SQLite and exposes a JSON API. The static frontend is hosted on **GitHub
-Pages**, deliberately off the NAS — a status page served by the machine it
-monitors is unreachable exactly when it is needed.
+Živě: `status.ol1n.com` (Pages) · API `status-api.ol1n.com` (NAS přes Cloudflare Tunnel).
 
-Live at: `status.ol1n.com` (GitHub Pages) · API at `status-api.ol1n.com` (NAS).
-
-## Architecture
-
-```
-NAS (Ubuntu)
-  └─ status-collector (Go binary, systemd) — three independent clocks
-       ├─ -interval 1h        availability probes   → checks
-       ├─ -sample-interval 1m ComfyUI gauges        → metrics
-       ├─ -sample-interval 1m host metrics          → metrics
-       ├─ -drain-interval 5m  ComfyUI /history      → comfy_jobs
-       ├─ -snapshot-interval 5m  writes status.json + comfy.json
-       └─ HTTP API on 127.0.0.1:8765
-            ├─ GET /api/status        → availability + hourly buckets
-            ├─ GET /api/comfy         → ComfyUI metrics
-            ├─ GET /api/hosts         → CPU/RAM/load/disk/temperature per machine
-            └─ GET /api/history/{id}  → raw hourly buckets
-
-  └─ systemd timer (15m) → deploy/publish-snapshot.sh
-       force-pushes the snapshot to the repo's orphan `data` branch
-
-Cloudflare Tunnel (NAS) → status-api.ol1n.com → 127.0.0.1:8765
-GitHub Actions → GitHub Pages → status.ol1n.com
-
-Frontend tries the live API first, falls back to
-raw.githubusercontent.com/<repo>/data/status.json, and labels stale data.
-```
-
-## Build & Deploy
-
+## Build a test
 ```bash
 make build        # → bin/status-collector
 make build-linux  # → bin/status-collector-linux-{amd64,arm64}
-make test         # go test ./...
+make test         # go test ./...  (gate před pushem)
 make logs         # journalctl -u ol1n-status -f
 
 ./deploy/deploy.sh          # build here, then install (needs Go on this machine)
 ./deploy/install.sh <bin>   # install only — what the release tarball runs
 ```
+NAS instaluje z release tarballu (tag `v*`), nemá toolchain ani checkout.
 
-The NAS installs from a release tarball (`.github/workflows/release.yml`), so it
-needs neither a toolchain nor a checkout. Tag `v*` to publish one.
+## Mapa
+- `cmd/status-collector/` — flagy, tickery, HTTP server; `cmd/seed-demo/` — falešná data pro frontend.
+- `internal/api|checker|comfy|host|storage/` — API a snapshot, probe, ComfyUI poller, metriky strojů, SQLite.
+- `web/index.html` — jednosouborový frontend bez build kroku.
+- `deploy/` — systemd unity, Cloudflare poznámky, publish skript; `deploy/spark/` — GPU textfile pro node_exporter.
 
-Frontend deploys on push to `main` via `.github/workflows/pages.yml`. Never push
-a `gh-pages` branch — with Pages Source set to GitHub Actions that push silently
-does nothing while the live site goes stale.
+## Invarianty
+- Frontend deployuje jen `.github/workflows/pages.yml` při pushi do `main`.
+  Nikdy nepushuj větev `gh-pages`: při Pages Source = GitHub Actions push tiše
+  nic neudělá a živý web zastará.
+- Žádný cgo SQLite driver: NAS dostává staženou binárku cross-kompilovanou
+  pro linux/amd64 i arm64.
+- Frontend **bez build kroku a bez závislostí**; jediná externí reference je
+  Google Fonts `@import`.
+- Čtení ComfyUI history musí zůstat idempotentní: upsert podle `prompt_id`,
+  nikdy insert. ComfyUI po restartu historii zahodí, `comfy_jobs` je záznam.
+- Nové tabulky přes `CREATE TABLE IF NOT EXISTS`; tabulka verzí migrací není,
+  takže každý budoucí `ALTER` musí snést opakované spuštění.
+- Host metriky mají jeden tvar pro /proc i node_exporter; teplota `temp_c`
+  s labelem `zone`/`gpu`/`nvme`. Detaily v `docs/architecture.md`.
+- Grafy: dostupnost jako mřížka buněk, každá veličina v čase jako line chart;
+  zelená/červená/oranžová jen pro stav.
 
-## Project Structure
-
-```
-cmd/status-collector/main.go   # flags, the three tickers, HTTP server
-cmd/seed-demo/main.go          # dev-only: fake data + snapshot for frontend work
-
-internal/api/api.go            # /api/status, /api/comfy, /api/history, snapshot writer
-internal/checker/checker.go    # HTTP health probes; DefaultEndpoints(comfyBase)
-internal/comfy/comfy.go        # ComfyUI poller: gauges + job history
-internal/host/host.go          # machine metrics: /proc locally, node_exporter remotely
-internal/host/disk.go          # statfs wrapper (Bsize differs across platforms)
-internal/storage/storage.go    # SQLite: checks, metrics, comfy_jobs
-
-web/index.html                 # single-file frontend, no build step
-web/CNAME                      # written by the workflow, only when DNS is ready
-
-deploy/                        # systemd units, Cloudflare notes, publish script
-deploy/spark/                  # GPU temperature textfile for SPARK's node_exporter
-```
-
-## Conventions
-
-- SQLite is `modernc.org/sqlite` — pure Go, so `CGO_ENABLED=0` builds and the
-  binary cross-compiles to linux/amd64 and linux/arm64 from any machine. Do not
-  reintroduce a cgo driver: the NAS deploy is a downloaded binary and has no
-  toolchain.
-- State: `/var/lib/ol1n-status/status.db`, snapshot in `snapshot/` beside it.
-- Service user/group: `ol1n` by default, overridable with `OL1N_USER`.
-  install.sh rewrites `User=`/`Group=` in the units to match, because chowning
-  the data directory to one user while systemd runs the service as another
-  fails at runtime with nothing obvious in the logs.
-- Frontend has **no build step and no dependencies**. Keep it that way; the only
-  external reference is the Google Fonts `@import`.
-- `<meta name="api-base">` and `<meta name="snapshot-base">` are left empty in
-  the repo and stamped by the workflow. Empty means "same origin", so the file
-  works when opened locally.
-- Availability is drawn as a cell grid (a handful of states); every magnitude
-  over time is a line chart. Series colours live in the `--series-*` custom
-  properties and were validated for the dark chart surface — do not add a hue
-  without re-checking CVD separation, and keep green/red/amber reserved for
-  status.
-- Host metrics use one shape for both sources: the local /proc sampler and the
-  node_exporter scraper emit identical metric names, so nothing downstream has
-  to know which kind of machine it is looking at. `metrics.source` is the host
-  name. CPU is a delta and is suppressed until two readings exist (`cpu_valid`).
-- Temperature is `temp_c` with the sensor kind as label: `zone` (hottest
-  thermal zone), `gpu` and `nvme` (hottest composite). Raw sensors are reduced
-  to one line per kind on purpose. node_exporter knows nothing about GPUs, so
-  `gpu` comes from `deploy/spark/`, which writes `node_gpu_temp_celsius` and
-  `node_gpu_power_watts` (stored as `gpu_power_w`, summed over GPUs) for the
-  textfile collector; a `gpu.prom` older than 5 minutes is ignored.
-- ComfyUI history reads must stay idempotent: upsert by `prompt_id`, never
-  insert. ComfyUI drops its history on restart, so `comfy_jobs` is the record.
-- New tables use `CREATE TABLE IF NOT EXISTS`; there is no migration version
-  table, so any future `ALTER` must tolerate being re-run.
+## Kam dál
+- `docs/architecture.md` — diagram běhu, struktura souborů, deploy, model metrik, frontend.
+- `README.md` — instalace na NAS a SPARK, konfigurace v `/etc/default/ol1n-status`.
+- `deploy/cloudflare-setup.md` — tunel a Access.

@@ -1,0 +1,83 @@
+# Architecture
+
+Moved out of `CLAUDE.md`. Deployment steps for humans are in `README.md`.
+
+## Runtime
+
+```
+NAS (Ubuntu)
+  └─ status-collector (Go binary, systemd) — independent tickers
+       ├─ -interval 1h        availability probes   → checks
+       ├─ -sample-interval 1m ComfyUI gauges        → metrics
+       ├─ -sample-interval 1m host metrics          → metrics
+       ├─ -drain-interval 5m  ComfyUI /history      → comfy_jobs
+       ├─ -snapshot-interval 5m  writes status.json + comfy.json + hosts.json
+       └─ HTTP API on 127.0.0.1:8765 (set by the unit; the flag default is :8765)
+            ├─ GET /api/status        → availability + hourly buckets
+            ├─ GET /api/comfy         → ComfyUI metrics
+            ├─ GET /api/hosts         → CPU/RAM/load/disk/temperature per machine
+            └─ GET /api/history/{id}  → raw hourly buckets
+
+  └─ systemd timer (15m) → deploy/publish-snapshot.sh
+       force-pushes the snapshot to the repo's orphan `data` branch
+
+Cloudflare Tunnel (NAS) → status-api.ol1n.com → 127.0.0.1:8765
+GitHub Actions → GitHub Pages → status.ol1n.com
+
+Frontend tries the live API first, falls back to
+raw.githubusercontent.com/<repo>/data/status.json, and labels stale data.
+```
+
+## Project structure
+
+```
+cmd/status-collector/main.go   # flags, the tickers, HTTP server
+cmd/seed-demo/main.go          # dev-only: fake data + snapshot for frontend work
+
+internal/api/api.go            # /api/status, /api/comfy, /api/hosts, /api/history, snapshot writer
+internal/checker/checker.go    # HTTP health probes; DefaultEndpoints(comfyBase)
+internal/comfy/comfy.go        # ComfyUI poller: gauges + job history
+internal/host/host.go          # machine metrics: /proc locally, node_exporter remotely
+internal/host/disk.go          # statfs wrapper (Bsize differs across platforms)
+internal/storage/storage.go    # SQLite: checks, metrics, comfy_jobs
+
+web/index.html                 # single-file frontend, no build step
+web/CNAME                      # written by the workflow, only when DNS is ready
+
+deploy/                        # systemd units, Cloudflare notes, publish script
+deploy/spark/                  # GPU temperature textfile for SPARK's node_exporter
+```
+
+## Deploy details
+
+- The NAS installs from a release tarball (`.github/workflows/release.yml`), so it
+  needs neither a toolchain nor a checkout. Tag `v*` to publish one.
+- State: `/var/lib/ol1n-status/status.db`, snapshot in `snapshot/` beside it.
+- Service user/group: `ol1n` by default, overridable with `OL1N_USER`.
+  install.sh rewrites `User=`/`Group=` in the units to match, because chowning
+  the data directory to one user while systemd runs the service as another
+  fails at runtime with nothing obvious in the logs.
+
+## Metrics model
+
+- Host metrics use one shape for both sources: the local /proc sampler and the
+  node_exporter scraper emit identical metric names, so nothing downstream has
+  to know which kind of machine it is looking at. `metrics.source` is the host
+  name. CPU is a delta and is suppressed until two readings exist (`cpu_valid`).
+- Temperature is `temp_c` with the sensor kind as label: `zone` (hottest
+  thermal zone), `gpu` and `nvme` (hottest composite). Raw sensors are reduced
+  to one line per kind on purpose. node_exporter knows nothing about GPUs, so
+  `gpu` comes from `deploy/spark/`, which writes `node_gpu_temp_celsius` and
+  `node_gpu_power_watts` (stored as `gpu_power_w`, summed over GPUs) for the
+  textfile collector; a `gpu.prom` older than 5 minutes is ignored.
+
+## Frontend
+
+- `<meta name="api-base">` and `<meta name="snapshot-base">` are left empty in
+  the repo and stamped by the workflow. Empty means "same origin", so the file
+  works when opened locally.
+- Availability is drawn as a cell grid (a handful of states); every magnitude
+  over time is a line chart. Series colours live in the `--series-*` custom
+  properties and were validated for the dark chart surface — do not add a hue
+  without re-checking CVD separation, and keep green/red/amber reserved for
+  status.

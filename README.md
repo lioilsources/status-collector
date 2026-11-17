@@ -120,7 +120,7 @@ curl -s localhost:9100/metrics | head -5
 
 Pak na NASu do `/etc/default/ol1n-status`:
 ```
-NODE_EXPORTERS="-node-exporter spark=http://192.168.1.51:9100/metrics"
+NODE_EXPORTERS="-node-exporter spark=http://<spark-host>:9100/metrics"
 ```
 Dalších strojů může být kolik chceš: `spark=http://…,gpu2=http://…`.
 
@@ -143,7 +143,7 @@ přestane běžet, collector hodnotu starší než 5 minut zahodí, místo aby d
 kreslil poslední známou teplotu.
 
 > node_exporter poslouchá defaultně na všech rozhraních. Omez ho na LAN
-> (`--web.listen-address=192.168.1.51:9100`) nebo firewallem — neexportuj ho
+> (`--web.listen-address=<spark-lan-ip>:9100`) nebo firewallem — neexportuj ho
 > do internetu.
 
 **CPU je delta**, takže po startu collectoru je první vzorek bez CPU hodnoty
@@ -200,8 +200,8 @@ binárka se dá zkompilovat i z macOS pro linux/amd64 i arm64.
 
 Vytvoř `/etc/default/ol1n-status`:
 ```
-COMFY_FLAG="-comfy http://192.168.1.50:8188"
-NODE_EXPORTERS="-node-exporter spark=http://192.168.1.51:9100/metrics"
+COMFY_FLAG="-comfy http://<spark-host>:8188"
+NODE_EXPORTERS="-node-exporter spark=http://<spark-host>:9100/metrics"
 CF_ACCESS_CLIENT_ID=<id>.access
 CF_ACCESS_CLIENT_SECRET=<secret>
 ```

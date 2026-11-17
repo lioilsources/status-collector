@@ -60,7 +60,7 @@ func cfAccessHeaders() map[string]string {
 // check GET /openapi.json for the route list rather than guessing.
 //
 // DefaultEndpoints returns the standard monitored endpoints.
-// comfyBase is the ComfyUI base URL (e.g. http://192.168.1.50:8188); when empty,
+// comfyBase is the ComfyUI base URL (e.g. http://<spark-host>:8188); when empty,
 // the ComfyUI endpoints are omitted entirely.
 func DefaultEndpoints(comfyBase string) []Endpoint {
 	base := "https://llm.ol1n.com"

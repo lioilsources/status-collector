@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/*.jks)",
+      "Read(**/*.p12)",
+      "Read(**/*.p8)",
+      "Read(**/.env)",
+      "Read(**/.env.development)",
+      "Read(**/.env.local)",
+      "Read(**/.env.production)",
+      "Read(**/.env.staging)",
+      "Read(**/key.properties)",
+      "Read(**/secrets.dart)"
+    ],
+    "allow": [
+      "Bash(go build *)",
+      "Bash(go run *)",
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(make *)"
+    ]
+  }
+}

@@ -294,7 +294,7 @@ func containsName(ms []storage.Metric, name string) bool {
 }
 
 func TestParseNodeExporters(t *testing.T) {
-	got, err := ParseNodeExporters("spark=http://192.168.1.51:9100/metrics, gpu=http://gpu:9100/metrics")
+	got, err := ParseNodeExporters("spark=http://spark-host:9100/metrics, gpu=http://gpu:9100/metrics")
 	if err != nil {
 		t.Fatalf("ParseNodeExporters: %v", err)
 	}

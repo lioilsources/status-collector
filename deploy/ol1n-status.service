@@ -10,8 +10,8 @@ Group=ol1n
 
 # Optional overrides; the leading '-' makes the file optional.
 #   /etc/default/ol1n-status
-#   COMFY_FLAG="-comfy http://192.168.1.50:8188"
-#   NODE_EXPORTERS="-node-exporter spark=http://192.168.1.51:9100/metrics"
+#   COMFY_FLAG="-comfy http://<spark-host>:8188"
+#   NODE_EXPORTERS="-node-exporter spark=http://<spark-host>:9100/metrics"
 #   HOST_DISKS="-host-disks /,/media,/pool"
 #   CF_ACCESS_CLIENT_ID=<id>.access
 #   CF_ACCESS_CLIENT_SECRET=<secret>

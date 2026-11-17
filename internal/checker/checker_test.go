@@ -9,7 +9,7 @@ func TestServiceTokenOnlyOnCloudflareEndpoints(t *testing.T) {
 	t.Setenv("CF_ACCESS_CLIENT_ID", "abc.access")
 	t.Setenv("CF_ACCESS_CLIENT_SECRET", "s3cret")
 
-	eps := DefaultEndpoints("http://192.168.1.50:8188")
+	eps := DefaultEndpoints("http://spark-host:8188")
 	if len(eps) == 0 {
 		t.Fatal("no endpoints")
 	}
@@ -57,7 +57,7 @@ func TestComfyEndpointsFollowTheFlag(t *testing.T) {
 		}
 	}
 
-	with := DefaultEndpoints("http://192.168.1.50:8188/")
+	with := DefaultEndpoints("http://spark-host:8188/")
 	var urls []string
 	for _, ep := range with {
 		if ep.Group == "ComfyUI" {
@@ -86,7 +86,7 @@ func TestKnownDeadEndpointsStayRemoved(t *testing.T) {
 		"vllm_tokenize":     "404 — vLLM-native route, not exposed here",
 		"openai_embeddings": "500 — routed, but the served model has no embedding head",
 	}
-	for _, ep := range DefaultEndpoints("http://192.168.1.50:8188") {
+	for _, ep := range DefaultEndpoints("http://spark-host:8188") {
 		if why, bad := dead[ep.ID]; bad {
 			t.Errorf("endpoint %q is back; it can never go green (%s). "+
 				"If the gateway now serves it, check GET /openapi.json for the real path.",
@@ -97,7 +97,7 @@ func TestKnownDeadEndpointsStayRemoved(t *testing.T) {
 
 func TestEveryEndpointHasTheFieldsTheFrontendNeeds(t *testing.T) {
 	seen := map[string]bool{}
-	for _, ep := range DefaultEndpoints("http://192.168.1.50:8188") {
+	for _, ep := range DefaultEndpoints("http://spark-host:8188") {
 		if ep.ID == "" || ep.Name == "" || ep.Group == "" || ep.URL == "" {
 			t.Errorf("incomplete endpoint: %+v", ep)
 		}
